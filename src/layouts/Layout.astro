@@ -1,0 +1,140 @@
+---
+import '../styles/global.css';
+import { site } from '../site.config';
+
+interface Props {
+	title: string;
+	description?: string;
+	breadcrumbs?: Array<{ name: string; url: string }>;
+	ogType?: 'website' | 'article';
+	article?: { pubDate: Date; updatedDate?: Date; tags?: string[] };
+	schemas?: Record<string, unknown>[];
+}
+
+const canonicalURL = new URL(Astro.url.pathname, site.url);
+const { title, description = site.description, breadcrumbs, ogType = 'website', article, schemas = [] } = Astro.props;
+const ogImage = site.ogImage;
+---
+
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+		<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png" />
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+		<link rel="canonical" href={canonicalURL.href} />
+		<title>{title}</title>
+		<meta name="description" content={description} />
+
+		<!-- Open Graph -->
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<meta property="og:type" content={ogType} />
+		<meta property="og:url" content={canonicalURL.href} />
+		{article && <meta property="article:published_time" content={article.pubDate.toISOString()} />}
+		{article?.updatedDate && <meta property="article:modified_time" content={article.updatedDate.toISOString()} />}
+		{article?.tags?.map((tag) => <meta property="article:tag" content={tag} />)}
+		<meta property="og:site_name" content={site.name} />
+		<meta property="og:image" content={ogImage} />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+
+		<!-- Twitter -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:title" content={title} />
+		<meta name="twitter:description" content={description} />
+		<meta name="twitter:image" content={ogImage} />
+
+		<!-- Schema.org JSON-LD -->
+		<script type="application/ld+json" set:html={JSON.stringify({
+			"@context": "https://schema.org",
+			"@type": "Organization",
+			"name": site.name,
+			"url": site.url,
+			"description": site.description
+		})} />
+		<script type="application/ld+json" set:html={JSON.stringify({
+			"@context": "https://schema.org",
+			"@type": "WebSite",
+			"name": site.name,
+			"url": site.url,
+			"description": site.description,
+			"publisher": {
+				"@type": "Organization",
+				"name": site.name,
+				"url": site.url
+			}
+		})} />
+		{breadcrumbs && (
+			<script type="application/ld+json" set:html={JSON.stringify({
+				"@context": "https://schema.org",
+				"@type": "BreadcrumbList",
+				"itemListElement": breadcrumbs.map((item, i) => ({
+					"@type": "ListItem",
+					"position": i + 1,
+					"name": item.name,
+					"item": item.url
+				}))
+			})} />
+		)}
+		{schemas.map((schema) => (
+			<script type="application/ld+json" set:html={JSON.stringify({ "@context": "https://schema.org", ...schema })} />
+		))}
+		<link rel="alternate" type="application/rss+xml" title={`${site.rssTitle} blog`} href="/rss.xml" />
+
+		<!-- IBM Plex: engineering documentation register -->
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+		{site.gaMeasurementId && (
+			<>
+				<script async src={`https://www.googletagmanager.com/gtag/js?id=${site.gaMeasurementId}`}></script>
+				<script is:inline define:vars={{ gaId: site.gaMeasurementId }}>
+					window.dataLayer = window.dataLayer || [];
+					function gtag(){dataLayer.push(arguments);}
+					gtag('js', new Date());
+					gtag('config', gaId);
+				</script>
+			</>
+		)}
+	</head>
+	<body class="min-h-dvh flex flex-col">
+		<a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50 focus:bg-stone-900 focus:text-stone-50 focus:px-3 focus:py-2">Skip to content</a>
+
+		<!-- N3 side-rail on desktop: the wordmark runs up the left edge and the
+		     platform sections sit under it. Collapses to a normal bar on mobile,
+		     where a vertical rail would eat the viewport. -->
+		<header class="lg:fixed lg:inset-y-0 lg:left-0 lg:w-56 lg:border-r border-b lg:border-b-0 rule lg:flex lg:flex-col lg:justify-between lg:py-8 lg:px-6">
+			<div class="max-w-3xl mx-auto lg:mx-0 px-6 lg:px-0 py-4 lg:py-0 flex items-baseline justify-between gap-6 lg:block">
+				<a href="/" class="font-mono text-sm font-medium text-stone-900 dark:text-zinc-100 hover:text-cobalt-600 dark:hover:text-cobalt-400 transition-colors lg:block lg:mb-10">
+					{site.wordmark}
+				</a>
+				<nav class="flex items-center gap-5 text-sm lg:flex-col lg:items-start lg:gap-3">
+					{site.nav.map((item) => (
+						<a href={item.href} class="text-stone-600 dark:text-zinc-400 hover:text-cobalt-600 dark:hover:text-cobalt-400 transition-colors">{item.label}</a>
+					))}
+				</nav>
+			</div>
+			<p class="hidden lg:block meta leading-relaxed">
+				Not a GitHub site.
+			</p>
+		</header>
+
+		<main id="main" class="flex-1 w-full lg:pl-56">
+			<div class="max-w-3xl mx-auto px-6 pt-12 lg:pt-16 pb-24">
+				<slot />
+			</div>
+		</main>
+
+		<footer class="w-full lg:pl-56">
+			<div class="max-w-3xl mx-auto px-6 pb-14">
+				<p class="border-t rule pt-6 meta leading-relaxed text-pretty">
+					{site.footerLine} Every claim about a product is read from that vendor's own documentation and carries the date it was checked. Corrections are welcome and ship fast. Set in IBM Plex. <a href="/about" class="underline hover:text-cobalt-600 dark:hover:text-cobalt-400">About and funding</a>. <a href="/rss.xml" class="underline hover:text-cobalt-600 dark:hover:text-cobalt-400">RSS</a>. <a href="/llms.txt" class="underline hover:text-cobalt-600 dark:hover:text-cobalt-400">llms.txt</a>.
+				</p>
+			</div>
+		</footer>
+	</body>
+</html>

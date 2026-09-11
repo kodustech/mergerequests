@@ -1,0 +1,49 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { getPublishedPosts, formatDate, CATEGORY_LABELS, SITE_URL } from '../../lib/blog';
+import { site } from '../../site.config';
+
+export async function getStaticPaths() {
+	return site.platforms.map((p) => ({ params: { platform: p.key }, props: { platform: p } }));
+}
+
+const { platform } = Astro.props;
+const posts = (await getPublishedPosts()).filter((p) => p.data.platform === platform.key);
+
+const title = `${platform.label} tooling | mergerequests.dev`;
+const description = `${platform.blurb}`;
+---
+
+<Layout
+	title={title}
+	description={description}
+	breadcrumbs={[
+		{ name: 'Home', url: `${SITE_URL}/` },
+		{ name: platform.label, url: `${SITE_URL}/platform/${platform.key}/` }
+	]}
+>
+	<section class="max-w-[62ch] mb-10">
+		<p class="rail-label mb-3">{platform.label}</p>
+		<h1 class="text-2xl font-medium text-stone-900 dark:text-zinc-100 mb-3">{platform.label} tooling</h1>
+		<p class="text-stone-600 dark:text-zinc-400 leading-relaxed text-pretty">{platform.blurb}</p>
+	</section>
+
+	{posts.length > 0 ? (
+		<ul class="border-t rule">
+			{posts.map((post) => (
+				<li class="border-b rule">
+					<a href={`/blog/${post.id}`} class="group block py-4 sm:grid sm:grid-cols-[6.5rem_minmax(0,1fr)] sm:gap-6">
+						<time class="meta block sm:pt-[3px]" datetime={post.data.pubDate.toISOString()}>{formatDate(post.data.pubDate)}</time>
+						<div class="min-w-0">
+							<h2 class="text-[17px] font-medium text-stone-900 dark:text-zinc-100 group-hover:text-cobalt-600 dark:group-hover:text-cobalt-400 transition-colors mt-1 sm:mt-0">{post.data.title}</h2>
+							<p class="text-[15px] text-stone-600 dark:text-zinc-400 mt-1 text-pretty leading-relaxed">{post.data.description}</p>
+							<p class="meta mt-1">{CATEGORY_LABELS[post.data.category] ?? post.data.category}</p>
+						</div>
+					</a>
+				</li>
+			))}
+		</ul>
+	) : (
+		<p class="text-stone-600 dark:text-zinc-400">Nothing published for {platform.label} yet.</p>
+	)}
+</Layout>

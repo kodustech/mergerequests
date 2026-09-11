@@ -1,0 +1,38 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { site } from '../site.config';
+
+const title = "About and funding | mergerequests.dev";
+const description = "What mergerequests.dev covers, how claims about tools get verified, and who funds it.";
+---
+
+<Layout title={title} description={description}>
+	<section class="max-w-[68ch]">
+		<p class="rail-label mb-3">About</p>
+		<h1 class="text-2xl font-medium text-stone-900 dark:text-zinc-50 mb-8">What this is, and how it is checked</h1>
+
+		<div class="prose dark:prose-invert prose-stone max-w-none prose-headings:font-semibold prose-p:text-pretty prose-p:leading-[1.7]">
+			<p>
+				Most developer tooling writing assumes GitHub. Vendors document the GitHub integration first, benchmark on GitHub repositories, and leave the GitLab or Azure DevOps page thin or absent. If your team runs a self-managed GitLab or an Azure DevOps Server behind a firewall, you have spent an afternoon finding out whether a tool works for you at all.
+			</p>
+			<p>
+				This site covers that gap: continuous integration, code review, security scanning and delivery metrics for GitLab, Azure DevOps and Bitbucket, including the self-managed and on-premise editions.
+			</p>
+
+			<h3>How claims get checked</h3>
+			<p>
+				Anything factual about a product, meaning pricing, self-hosting and which platforms it supports, is read from that vendor's own documentation and stamped with the date it was read. Where a primary source does not answer the question, the page says unknown rather than guessing. Vendor pricing moves monthly, so treat anything more than a few weeks past its date as stale and click through.
+			</p>
+
+			<h3>Funding</h3>
+			<p>
+				Sponsored by <a href="https://kodus.io" rel="noopener">Kodus</a>, who make an open source code reviewer that runs on all three platforms. Their product is held to the same rule as everything else named here: a claim links to its source and gets an honest "unknown" where their own docs do not back it. Check the work. The site is <a href="https://github.com/kodustech/mergerequests" rel="noopener">open source</a>.
+			</p>
+
+			<h3>Corrections</h3>
+			<p>
+				A stale price or a wrong claim is a bug. <a href="https://github.com/kodustech/mergerequests/issues" rel="noopener">Open an issue</a> and it gets fixed.
+			</p>
+		</div>
+	</section>
+</Layout>

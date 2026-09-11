@@ -1,0 +1,123 @@
+---
+import { render } from 'astro:content';
+import Layout from '../../layouts/Layout.astro';
+import { getPublishedPosts, relatedPosts, readingTime, formatDate, CATEGORY_LABELS, SITE_URL } from '../../lib/blog';
+
+export async function getStaticPaths() {
+	const posts = await getPublishedPosts();
+	return posts.map((post) => ({
+		params: { slug: post.id },
+		props: { post, allPosts: posts },
+	}));
+}
+
+const { post, allPosts } = Astro.props;
+const { Content } = await render(post);
+
+const minutes = readingTime(post.body);
+const related = relatedPosts(post, allPosts);
+const url = `${SITE_URL}/blog/${post.id}/`;
+
+const schemas: Record<string, unknown>[] = [
+	{
+		"@type": "Article",
+		"headline": post.data.title,
+		"description": post.data.description,
+		"url": url,
+		"datePublished": post.data.pubDate.toISOString(),
+		"dateModified": (post.data.updatedDate ?? post.data.pubDate).toISOString(),
+		"author": {
+			"@type": "Organization",
+			"name": post.data.author,
+			"url": `${SITE_URL}/about/`
+		},
+		"publisher": {
+			"@type": "Organization",
+			"name": "mergerequests.dev",
+			"url": `${SITE_URL}/about/`
+		},
+		"mainEntityOfPage": { "@type": "WebPage", "@id": url },
+		"keywords": post.data.tags.join(', ')
+	},
+];
+
+if (post.data.faq.length > 0) {
+	schemas.push({
+		"@type": "FAQPage",
+		"mainEntity": post.data.faq.map((item) => ({
+			"@type": "Question",
+			"name": item.q,
+			"acceptedAnswer": { "@type": "Answer", "text": item.a }
+		}))
+	});
+}
+---
+
+<Layout
+	title={`${post.data.title} | mergerequests.dev`}
+	description={post.data.description}
+	ogType="article"
+	article={{ pubDate: post.data.pubDate, updatedDate: post.data.updatedDate, tags: post.data.tags }}
+	breadcrumbs={[
+		{ name: 'Home', url: `${SITE_URL}/` },
+		{ name: 'Blog', url: `${SITE_URL}/blog/` },
+		{ name: post.data.title, url }
+	]}
+	schemas={schemas}
+>
+	<div class="mb-12">
+		<a href="/blog" class="text-[15px] text-stone-500 dark:text-zinc-500 hover:text-cobalt-600 dark:hover:text-cobalt-400 transition-colors inline-flex items-center gap-2 mb-10">
+			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+			Back to Blog
+		</a>
+
+		<div class="meta flex flex-wrap items-center gap-3 mb-6">
+			<a href={`/blog/category/${post.data.category}`} class="hover:text-stone-900 dark:hover:text-zinc-100 transition-colors">[ {CATEGORY_LABELS[post.data.category] ?? post.data.category} ]</a>
+			<time datetime={post.data.pubDate.toISOString()}>{formatDate(post.data.pubDate)}</time>
+			{post.data.updatedDate && (
+				<span>Updated {formatDate(post.data.updatedDate)}</span>
+			)}
+			<span>{minutes} min read</span>
+		</div>
+
+		<h1 class="text-4xl md:text-5xl font-normal text-balance text-stone-900 dark:text-zinc-50 leading-tight mb-4">
+			{post.data.title}
+		</h1>
+		<p class="text-lg md:text-xl text-stone-600 dark:text-zinc-400 text-pretty leading-relaxed max-w-3xl">
+			{post.data.description}
+		</p>
+	</div>
+
+	<article class="prose dark:prose-invert prose-stone max-w-[68ch] prose-headings:font-semibold prose-headings:tracking-tight prose-p:text-pretty prose-p:leading-[1.7] prose-li:leading-[1.7]">
+		<Content />
+	</article>
+
+	{post.data.faq.length > 0 && (
+		<section class="mt-20 pt-12 border-t border-stone-200 dark:border-zinc-800">
+			<h2 class="rubric mb-8">FAQ</h2>
+			<div class="space-y-8">
+				{post.data.faq.map((item) => (
+					<div>
+						<h3 class="text-lg font-bold text-stone-900 dark:text-zinc-100 mb-2 text-balance">{item.q}</h3>
+						<p class="text-stone-600 dark:text-zinc-400 leading-relaxed text-pretty">{item.a}</p>
+					</div>
+				))}
+			</div>
+		</section>
+	)}
+
+	{related.length > 0 && (
+		<section class="mt-20 pt-12 border-t border-stone-200 dark:border-zinc-800">
+			<h2 class="rubric mb-8">Keep Reading</h2>
+			<div class="grid md:grid-cols-3 gap-8">
+				{related.map((r) => (
+					<a href={`/blog/${r.id}`} class="block group">
+						<span class="meta block mb-2">{CATEGORY_LABELS[r.data.category] ?? r.data.category}</span>
+						<span class="font-bold text-stone-900 dark:text-zinc-100 group-hover:underline underline-offset-4 decoration-stone-300 dark:decoration-zinc-700 text-balance">{r.data.title}</span>
+					</a>
+				))}
+			</div>
+		</section>
+	)}
+
+</Layout>

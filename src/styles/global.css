@@ -1,0 +1,122 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V5
+ * genre: modern-minimal · macrostructure: Ecosystem Index (rails by platform)
+ * theme: Cobalt direction · enrichment: none · nav: N3 side-rail · footer: Ft4 colophon
+ * tone: technical, instrument-panel · anchor hue: cobalt (cool, ~255°)
+ *
+ * Two sibling constraints, both deliberate:
+ *   aicodereview.io  — Space Grotesk + JetBrains Mono, cool grey, black accent
+ *   agentwrotethis   — Geist, warm paper, coral accent, chronological blog
+ * This site differs from agentwrotethis on all three diversification axes:
+ * cool paper instead of warm, IBM Plex instead of Geist, cobalt instead of
+ * coral. Cobalt's canonical pairing is Space Grotesk + JetBrains Mono, which is
+ * exactly what aicodereview.io already runs, so the pairing is substituted for
+ * IBM Plex, whose register is engineering documentation rather than product.
+ *
+ * Colour is redefined against the stone/zinc scales so the utility classes
+ * carry over from the template while the site reads as its own thing.
+ */
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Cool engineered near-white to graphite. */
+  --color-stone-50: oklch(98.8% 0.003 255);
+  --color-stone-100: oklch(97% 0.005 255);
+  --color-stone-200: oklch(93% 0.008 255);
+  --color-stone-300: oklch(87% 0.011 255);
+  --color-stone-400: oklch(71% 0.014 255);
+  --color-stone-500: oklch(57% 0.015 255);
+  --color-stone-600: oklch(45% 0.015 255);
+  --color-stone-700: oklch(35% 0.014 255);
+  --color-stone-800: oklch(27% 0.013 255);
+  --color-stone-900: oklch(20% 0.012 255);
+
+  --color-zinc-50: oklch(96% 0.005 255);
+  --color-zinc-100: oklch(92% 0.007 255);
+  --color-zinc-200: oklch(86% 0.009 255);
+  --color-zinc-300: oklch(78% 0.011 255);
+  --color-zinc-400: oklch(65% 0.013 255);
+  --color-zinc-500: oklch(53% 0.014 255);
+  --color-zinc-600: oklch(41% 0.014 255);
+  --color-zinc-700: oklch(31% 0.013 255);
+  --color-zinc-800: oklch(24% 0.012 255);
+  --color-zinc-900: oklch(18% 0.011 255);
+  --color-zinc-950: oklch(13% 0.010 255);
+
+  /* One signal, and it is cool. */
+  --color-cobalt-600: oklch(48% 0.19 258);
+  --color-cobalt-500: oklch(56% 0.20 258);
+  --color-cobalt-400: oklch(68% 0.16 258);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  /* Gate 34: no horizontal scroll at any width. clip, never hidden. */
+  html, body { overflow-x: clip; }
+
+  body {
+    @apply antialiased bg-stone-50 text-stone-900 dark:bg-zinc-950 dark:text-zinc-100;
+  }
+
+  h1, h2, h3 { letter-spacing: -0.018em; text-wrap: balance; }
+
+  /* Ruler-drawn, not editorial hairline: this is an instrument panel. */
+  .rule { @apply border-stone-300 dark:border-zinc-800; }
+
+  /* Data, not prose: platform keys, dates, counts. */
+  .meta {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+    @apply text-stone-500 dark:text-zinc-500;
+  }
+
+  /* A rail label. Monospace and uppercase is right here and wrong on the
+     sibling: this site is a reference, that one is a blog. */
+  .rail-label {
+    font-family: var(--font-mono);
+    @apply text-xs uppercase tracking-[0.14em] text-stone-500 dark:text-zinc-500;
+  }
+
+  a { text-underline-offset: 3px; }
+
+  .prose a, a.accent {
+    @apply text-cobalt-600 dark:text-cobalt-400;
+    text-decoration-thickness: 1px;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-cobalt-500);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Tight radii, visible borders. */
+  .panel {
+    @apply border border-stone-200 dark:border-zinc-800 rounded-md bg-stone-100/50 dark:bg-zinc-900/50;
+  }
+
+  .prose :where(code):not(:where(pre code)) {
+    @apply bg-stone-100 dark:bg-zinc-900 text-stone-800 dark:text-zinc-200 rounded-[3px] px-1 py-0.5 font-normal;
+    font-size: 0.875em;
+  }
+  .prose :where(code):not(:where(pre code))::before,
+  .prose :where(code):not(:where(pre code))::after { content: none; }
+  .prose :where(pre) {
+    @apply bg-stone-100 dark:bg-zinc-900 text-stone-800 dark:text-zinc-200 border border-stone-200 dark:border-zinc-800 rounded-md;
+    font-size: 0.875rem;
+    line-height: 1.65;
+  }
+  .prose :where(th) { @apply text-stone-600 dark:text-zinc-400 font-medium; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
