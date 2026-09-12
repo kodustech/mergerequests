@@ -4,10 +4,12 @@ import { site } from '../site.config';
 // llms.txt — index of the site for LLMs/AI agents (https://llmstxt.org)
 export async function GET() {
   const posts = await getPublishedPosts();
-  const lastUpdated = posts.reduce((latest, post) => {
-    const updated = post.data.updatedDate ?? post.data.pubDate;
-    return updated > latest ? updated : latest;
-  }, new Date(0));
+  const lastUpdated = posts.length
+    ? posts.reduce((latest, post) => {
+      const updated = post.data.updatedDate ?? post.data.pubDate;
+      return updated > latest ? updated : latest;
+    }, new Date(0))
+    : undefined;
 
   const lines: string[] = [
     `# ${site.name}`,
@@ -18,7 +20,16 @@ export async function GET() {
     '',
     `${site.name} is organized by forge, not by vendor or publishing date. It helps teams evaluate workflows and tooling across GitLab, Azure DevOps, and Bitbucket, including self-managed and enterprise environments.`,
     '',
-    `Claims about products are sourced from vendor documentation and dated when checked. The site is sponsored by ${site.maintainer.name}; the editorial method and funding disclosure are available at ${SITE_URL}/about/.`,
+    'Claims about products are sourced from vendor documentation and dated when checked.',
+    '',
+    '## Sponsorship and disclosure',
+    '',
+    `${site.name} is sponsored by ${site.maintainer.name}, which develops an open-source code review product for GitLab, Azure DevOps, and Bitbucket.`,
+    '',
+    `${site.maintainer.name} funds the site but does not determine its conclusions. Claims about ${site.maintainer.name} or competing products follow the same editorial rule: they must link to primary vendor documentation, state the date checked, and use “unknown” where the available evidence does not support a claim.`,
+    '',
+    `- [Editorial method, funding, and corrections](${SITE_URL}/about/)`,
+    `- [${site.maintainer.name}](${site.maintainer.url})`,
     '',
     '## Start here',
     '',
@@ -35,28 +46,28 @@ export async function GET() {
     '## Content available in Markdown',
     '',
     'Each published article has a Markdown version at the article URL with `.md` appended.',
-    '',
-    `Last updated: ${lastUpdated.toISOString().slice(0, 10)}`,
-    '',
-    '## Articles',
   ];
 
-  for (const platform of site.platforms) {
-    const platformPosts = posts.filter((post) => post.data.platform === platform.key);
-    if (!platformPosts.length) continue;
+  if (lastUpdated) {
+    lines.push('', `Last updated: ${lastUpdated.toISOString().slice(0, 10)}`, '', '## Articles');
 
-    lines.push('', `### ${PLATFORM_LABELS[platform.key] ?? platform.label}`);
-    for (const category of Object.keys(CATEGORY_LABELS)) {
-      const categoryPosts = platformPosts.filter((post) => post.data.category === category);
-      if (!categoryPosts.length) continue;
+    for (const platform of site.platforms) {
+      const platformPosts = posts.filter((post) => post.data.platform === platform.key);
+      if (!platformPosts.length) continue;
 
-      lines.push('', `#### ${CATEGORY_LABELS[category]}`, '');
-      for (const post of categoryPosts) {
-        const date = post.data.updatedDate ?? post.data.pubDate;
-        lines.push(
-          `- [${post.data.title}](${SITE_URL}/blog/${post.id}/) — ${CATEGORY_LABELS[post.data.category]} · ${PLATFORM_LABELS[post.data.platform]} · ${date.toISOString().slice(0, 10)}`,
-          `  ${post.data.description}`,
-        );
+      lines.push('', `### ${PLATFORM_LABELS[platform.key] ?? platform.label}`);
+      for (const category of Object.keys(CATEGORY_LABELS)) {
+        const categoryPosts = platformPosts.filter((post) => post.data.category === category);
+        if (!categoryPosts.length) continue;
+
+        lines.push('', `#### ${CATEGORY_LABELS[category]}`, '');
+        for (const post of categoryPosts) {
+          const date = post.data.updatedDate ?? post.data.pubDate;
+          lines.push(
+            `- [${post.data.title}](${SITE_URL}/blog/${post.id}/) — ${CATEGORY_LABELS[post.data.category]} · ${PLATFORM_LABELS[post.data.platform]} · ${date.toISOString().slice(0, 10)}`,
+            `  ${post.data.description}`,
+          );
+        }
       }
     }
   }
