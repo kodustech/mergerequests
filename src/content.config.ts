@@ -1,9 +1,8 @@
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
-import { site } from './site.config';
+import { site, BLOG_CATEGORIES, PLATFORMS } from './site.config';
 
-export const BLOG_CATEGORIES = ['guide', 'comparison', 'reference', 'migration', 'explainer'] as const;
-export const PLATFORMS = ['gitlab', 'azure-devops', 'bitbucket', 'multi'] as const;
+export { BLOG_CATEGORIES, PLATFORMS };
 
 const blogCollection = defineCollection({
   loader: glob({ pattern: "**/*.{md,mdx}", base: "./src/content/blog" }),

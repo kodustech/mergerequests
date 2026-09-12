@@ -1,7 +1,7 @@
 ---
 import { render } from 'astro:content';
 import Layout from '../../layouts/Layout.astro';
-import { getPublishedPosts, relatedPosts, readingTime, formatDate, CATEGORY_LABELS, SITE_URL } from '../../lib/blog';
+import { getPublishedPosts, relatedPosts, readingTime, formatDate, CATEGORY_LABELS, PLATFORM_LABELS, SITE_URL } from '../../lib/blog';
 
 export async function getStaticPaths() {
 	const posts = await getPublishedPosts();
@@ -72,7 +72,8 @@ if (post.data.faq.length > 0) {
 		</a>
 
 		<div class="meta flex flex-wrap items-center gap-3 mb-6">
-			<a href={`/blog/category/${post.data.category}`} class="hover:text-stone-900 dark:hover:text-zinc-100 transition-colors">[ {CATEGORY_LABELS[post.data.category] ?? post.data.category} ]</a>
+			<a href={`/platform/${post.data.platform}`} class="hover:text-stone-900 dark:hover:text-zinc-100 transition-colors">{PLATFORM_LABELS[post.data.platform] ?? post.data.platform}</a>
+			<span>{CATEGORY_LABELS[post.data.category] ?? post.data.category}</span>
 			<time datetime={post.data.pubDate.toISOString()}>{formatDate(post.data.pubDate)}</time>
 			{post.data.updatedDate && (
 				<span>Updated {formatDate(post.data.updatedDate)}</span>

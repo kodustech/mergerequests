@@ -3,6 +3,16 @@
  * the repo and edits this file; nothing else should hardcode the domain, the
  * name or the editorial line.
  */
+/**
+ * The two closed sets the content model enforces. They live here, next to the
+ * platform rails, because three consumers need them and only one of them can
+ * import `astro:content`: the collection schema, the pages, and the content API
+ * route that writes a post's frontmatter. When the API kept its own copy the two
+ * drifted within a day and every API-written post failed the schema at build.
+ */
+export const PLATFORMS = ['gitlab', 'azure-devops', 'bitbucket', 'multi'] as const;
+export const BLOG_CATEGORIES = ['guide', 'comparison', 'reference', 'migration', 'explainer'] as const;
+
 export const site = {
   url: 'https://mergerequests.dev',
   name: 'mergerequests.dev',

@@ -12,6 +12,11 @@ export const CATEGORY_LABELS: Record<string, string> = {
   'explainer': 'Explainer',
 };
 
+/** Platform key to its display label, read off the rails so the two cannot drift. */
+export const PLATFORM_LABELS: Record<string, string> = Object.fromEntries(
+  site.platforms.map((p) => [p.key, p.label]),
+);
+
 export type BlogPost = CollectionEntry<'blog'>;
 
 export async function getPublishedPosts(): Promise<BlogPost[]> {
@@ -47,13 +52,6 @@ export function relatedPosts(post: BlogPost, all: BlogPost[], limit = 3): BlogPo
     .slice(0, limit)
     .map(({ p }) => p);
 }
-
-export const PLATFORM_LABELS: Record<string, string> = {
-  'gitlab': 'GitLab',
-  'azure-devops': 'Azure DevOps',
-  'bitbucket': 'Bitbucket',
-  'multi': 'Across platforms',
-};
 
 /** Published guides for one forge, newest first. */
 export async function getPostsForPlatform(platform: string) {

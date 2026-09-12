@@ -1,9 +1,15 @@
 import type { APIRoute } from 'astro';
 import { getCollection } from 'astro:content';
 
+import { BLOG_CATEGORIES, PLATFORMS } from '../../site.config';
+
 export const prerender = false;
 
-const CATEGORIES = ['best-of', 'alternatives', 'comparison', 'guide', 'explainer', 'review'];
+// Both sets come from site.config so the API can never accept a value the
+// collection schema will reject at build time. A post that commits and then
+// fails the build takes the whole site's next deploy with it.
+const CATEGORIES: readonly string[] = BLOG_CATEGORIES;
+const PLATFORM_KEYS: readonly string[] = PLATFORMS;
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const BLOG_DIR = 'src/content/blog';
 
@@ -41,6 +47,7 @@ interface PostInput {
   description: string;
   content: string;
   category: string;
+  platform: string;
   slug?: string;
   tags?: string[];
   faq?: Array<{ q: string; a: string }>;
@@ -64,6 +71,10 @@ function validate(input: unknown): { ok: true; value: PostInput } | { ok: false;
   if (typeof body.content !== 'string' || body.content.trim().length < 100) errors.push('content: required markdown string (min 100 chars)');
 
   if (typeof body.category !== 'string' || !CATEGORIES.includes(body.category)) errors.push(`category: must be one of ${CATEGORIES.join(', ')}`);
+
+  // Required, and with no default on purpose: platform is what organises this
+  // site, so a post that does not name one has nowhere to appear.
+  if (typeof body.platform !== 'string' || !PLATFORM_KEYS.includes(body.platform)) errors.push(`platform: must be one of ${PLATFORM_KEYS.join(', ')}`);
 
   if (body.slug !== undefined && (typeof body.slug !== 'string' || !SLUG_RE.test(body.slug))) errors.push('slug: lowercase kebab-case only (a-z, 0-9, hyphens)');
 
@@ -95,6 +106,7 @@ function buildMdx(post: PostInput, slug: string): string {
   ];
   if (post.updatedDate) lines.push(`updatedDate: ${post.updatedDate.slice(0, 10)}`);
   lines.push(`category: ${yamlStr(post.category)}`);
+  lines.push(`platform: ${yamlStr(post.platform)}`);
   lines.push(`tags: [${(post.tags ?? []).map((t) => yamlStr(t.toLowerCase())).join(', ')}]`);
   if (post.author) lines.push(`author: ${yamlStr(post.author)}`);
   if (post.faq?.length) {
@@ -169,6 +181,7 @@ export const GET: APIRoute = async () => {
         slug: p.id,
         title: p.data.title,
         category: p.data.category,
+        platform: p.data.platform,
         pubDate: p.data.pubDate.toISOString().slice(0, 10),
         draft: p.data.draft,
         url: `https://mergerequests.dev/blog/${p.id}/`,
