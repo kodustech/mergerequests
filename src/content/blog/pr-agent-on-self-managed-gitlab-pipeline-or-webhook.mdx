@@ -1,0 +1,88 @@
+---
+title: "PR-Agent on self-managed GitLab: pipeline or webhook?"
+description: "PR-Agent on self-managed GitLab (gitlab): pipeline mode vs webhook server, comment events, CI_SERVER_FQDN, auth types. PR-Agent docs read 2026-09-14."
+pubDate: 2026-09-14
+category: "guide"
+platform: "gitlab"
+tags: []
+---
+
+PR-Agent on a self-managed GitLab instance runs in one of two shapes: as a job inside your GitLab pipeline, or as a separate webhook server. The choice is mostly about whether you need `/review` and `/improve` commands from merge request comments.
+
+**Pipeline mode**
+
+You add a `pr_agent` job in `.gitlab-ci.yml`. It uses the pre-built `pragent/pr-agent` Docker image and reads `CI_` variables GitLab injects into the pipeline. The job here is from the vendor's GitLab Integration page (docs.pr-agent.ai, read 2026-09-14):
+
+```yaml
+stages:
+  - pr_agent
+
+pr_agent_job:
+  stage: pr_agent
+  image:
+    name: pragent/pr-agent:latest
+    entrypoint: [""]
+  script:
+    - cd /app
+    - echo "Running PR Agent action step"
+    - export MR_URL="$CI_MERGE_REQUEST_PROJECT_URL/merge_requests/$CI_MERGE_REQUEST_IID"
+    - echo "MR_URL=$MR_URL"
+    - export gitlab__url=$CI_SERVER_PROTOCOL://$CI_SERVER_FQDN
+    - export gitlab__PERSONAL_ACCESS_TOKEN=$GITLAB_PERSONAL_ACCESS_TOKEN
+    - export config__git_provider="gitlab"
+    - export openai__key=$OPENAI_KEY
+    - python -m pr_agent.cli --pr_url="$MR_URL" describe
+    - python -m pr_agent.cli --pr_url="$MR_URL" review
+    - python -m pr_agent.cli --pr_url="$MR_URL" improve
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+```
+
+Pipeline mode runs the configured commands automatically when GitLab creates a merge request pipeline. Per the docs, it does NOT receive GitLab comment events. If you want `/review` or `/improve` typed into a merge request comment, you deploy the webhook server instead and enable the Comments webhook trigger.
+
+**Two version gaps that bite on self-managed**
+
+`$CI_SERVER_FQDN` is only available from GitLab 16.10. On an older self-managed release the variable is absent; the vendor docs suggest combining `$CI_SERVER_HOST` and `$CI_SERVER_PORT` instead. Check your instance version before copying the job.
+
+`gitlab__SSL_VERIFY` points at a custom CA bundle. GitLab exposes `$CI_SERVER_TLS_CA_FILE` for exactly this. The docs warn that setting `gitlab__SSL_VERIFY=false` is not recommended. Self-signed CA certs in an on-prem GitLab instance, which you are running with SSL_VERIFY disabled because GitLab uses a self-signed cert, is the case this flag exists for.
+
+**CI artifact context**
+
+A file a previous job produced, like a test report or a SAST output, can be handed to `/review`, `/describe` and `/improve`. Save it as a job artifact, make the PR-Agent job depend on it with `needs:`, and point PR-Agent at it:
+
+```yaml
+pr_agent_job:
+  stage: pr_agent
+  needs: ["test_job"]
+  image:
+    name: pragent/pr-agent:latest
+    entrypoint: [""]
+  script:
+    - cd /app
+    - export ARTIFACT_PATH="$CI_PROJECT_DIR/reports/pytest.xml"
+    - export ARTIFACT_INSTRUCTIONS="These are the failing tests from this MR's pipeline. Call out any suggestion that would not fix them."
+    - python -m pr_agent.cli --pr_url="$MR_URL" review
+```
+
+Setting `ARTIFACT_PATH` turns the feature on by itself. The knobs for which tools receive the context, the label, and the size limit are the `[artifacts]` settings the docs describe for the GitHub Action, and they apply to the CLI the same way.
+
+**Skipping dependency bots**
+
+Dependency update bots use predictable source branch prefixes. Add a higher-priority `when: never` rule before the general merge request rule:
+
+```yaml
+rules:
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^(dependabot|renovate)\//'
+    when: never
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+```
+
+Filtering on `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME` is more reliable than `GITLAB_USER_LOGIN`, because that variable identifies whoever started the pipeline and can change on a manual run. The webhook server applies an equivalent filter through a repository-level `.pr_agent.toml` file with `ignore_pr_source_branches`.
+
+**Auth**
+
+Pipeline mode takes `GITLAB_PERSONAL_ACCESS_TOKEN` and `OPENAI_KEY` as masked CI variables. If your base branches are not protected, do not mark the variables as protected, or the pipeline will not have access to them.
+
+Prefer the webhook server when your team drives review from comments. Prefer pipeline mode when you just want describe, review and improve to fire automatically on every merge request with no separate service to run.
+
+The GitLab Integration page is at docs.pr-agent.ai. Facts above were read from it directly on 2026-09-14.
