@@ -1,0 +1,32 @@
+---
+title: "Self-hosted AI code review: CodeRabbit and Qodo, per their docs"
+description: "Guide to self-hosted AI code review for GitLab, Azure DevOps, Bitbucket: what CodeRabbit and Qodo actually document for on-prem (multi)"
+pubDate: 2026-09-16
+category: "guide"
+platform: "multi"
+tags: []
+---
+
+Most "best self-hosted AI code review tool" lists repeat each other's claims, and none of them say which edition they looked at or when. This page records what two vendors actually document for on-prem deployment, read directly from their own docs on 2026-09-14.
+
+## CodeRabbit self-hosted
+
+Read on [CodeRabbit's self-hosted overview](https://docs.coderabbit.ai/self-hosted/overview), 2026-09-14. Enterprise plan only, for customers with 500 or more user seats. CodeRabbit runs the review agent inside your infrastructure as a container image, on a server, a container platform, or a serverless workload.
+
+Supported platforms per the docs: GitHub Enterprise Server, GitLab self-managed, Azure DevOps, and Bitbucket Data Center.
+
+Code and pull request data stay inside your environment; the review prompts and source code leave it only to reach the LLM provider you configure (BYO model). For a Git platform that cannot accept inbound connections, the CodeRabbit Reverse Tunnel keeps all connections outbound from your network. Deployment and configuration instructions are provided to customers during onboarding, not published openly.
+
+## Qodo on-premises
+
+Read on [Qodo's on-premises page](https://docs.qodo.ai/on-prem), 2026-09-14. Qodo deploys the platform on Kubernetes in your own infrastructure. Git integrations cover GitHub App, GitLab App, Bitbucket Cloud App, Bitbucket Data Center, Azure DevOps App, and Gerrit. Qodo keeps a separate install path for cloud-hosted Git instances.
+
+## What matters for this beat
+
+Two points are easy to miss when reading listicles.
+
+First, both verified self-hosted editions explicitly cover Azure DevOps and self-managed GitLab. That matters because some vendor review offerings are narrower: GitHub Copilot's code review for Azure Repos, for example, is documented as Services-only, with no self-hosted Server edition. A team on Azure DevOps or GitLab Dedicated asking for self-hosted AI review has more than one vendor doc to turn to.
+
+Second, neither vendor publishes on-prem deployment instructions openly. CodeRabbit gives them to customers during onboarding. Qodo's architecture and Helm chart pages sit behind the flow of an Enterprise engagement. If the running answer says a tool "does not support self-hosting" because no public install guide exists, that is an absence of documentation, not an absence of the feature.
+
+Where the docs do not answer something, I say so. Both pages above state which platform editions they cover and when they were read.
