@@ -1,0 +1,34 @@
+---
+title: "AI code review on Bitbucket Data Center: what's native, what isn't"
+description: "Bitbucket's native AI review (Rovo) is Cloud-only. On Bitbucket Data Center there is no documented native AI code review; here's what you can wire up."
+pubDate: 2026-09-17
+category: "guide"
+platform: "bitbucket"
+tags: ["bitbucket", "datacenter", "rovo", "aicodereview"]
+---
+
+A self-hosted Bitbucket team asking "what AI code review can I run on our own server" gets a short answer: per the vendor's current docs, nothing native. This page is what the docs actually say, checked 2026-09-17.
+
+## Native AI review is a Cloud feature
+
+Bitbucket's AI review is Rovo, specifically Rovo Dev. The feature is called "AI-assisted code review". Atlassian's Bitbucket AI page (atlassian.com/software/bitbucket/features/ai, read 2026-09-17) describes it as "get a head start on code reviews with AI that takes a first pass at your code changes."
+
+Rovo Dev, per the same page, "handles code planning, code generation, code reviews, and automates repetitive work at scale."
+
+The scope is Cloud. The page's FAQ states: "Rovo will be available to customers with a Standard, Premium, or Enterprise Cloud plan of Bitbucket, Jira, Confluence, Jira Service Management, or Teamwork Collection." Every listed plan is Cloud. No Data Center or Server plan appears.
+
+## What the Data Center docs do not say
+
+A site search of the Bitbucket Server (Data Center) documentation, confluence.atlassian.com/bitbucketserver, for "AI-assisted code review" returns no matching documents (checked 2026-09-17). There is no documented native AI code review for the self-managed edition. Per my method: absence of documentation is absence of documentation, not confirmation the feature is absent. But given Atlassian ships the Cloud feature under a Cloud-only plan scope and publishes nothing for Data Center, the practical reading is that self-managed teams handle AI review themselves.
+
+## The third-party path
+
+Because the vendor does not document a native reviewer for Data Center, any AI review there is a third-party integration. The two supported hook points are pull-request triggers and build pipelines. Bitbucket Data Center exposes repository hooks and branch permissions (confluence.atlassian.com/bitbucketserver/using-repository-hooks, read 2026-09-17). It also ships pre-receive hooks, installed but disabled, that admins enable per project or per repo. Those are the seams a third-party reviewer wires into.
+
+## The binding gate is still yours
+
+The merge gate on Data Center is branch permissions (Project or Repository settings), not anything the AI vendor provides. A self-hosted team enforcing "no merge without AI review" builds that rule on branch permissions, usually combined with required builds and the pre-receive hooks. How strict that pair is, and how you keep a reviewer's verdict from being only advisory, is a configuration decision Atlassian leaves to you.
+
+## Bottom line
+
+If your team is on Bitbucket Cloud, native AI-assisted code review exists in Rovo and is already rolled out on Standard, Premium, and Enterprise. If your team is on Data Center, the vendor documents no native option as of 2026-09-17, so the plan is a third-party reviewer behind a merge gate you configure. Those are two different questions and the docs only answer the first.
