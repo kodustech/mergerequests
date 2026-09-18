@@ -1,0 +1,38 @@
+---
+title: "PR-Agent on GitLab, Azure DevOps, Bitbucket: the self-hosted code review option"
+description: "PR-Agent is MIT open-source and self-hostable on non-GitHub forges. PR-Agent docs, git providers, deployment, models (multi), verified 2026-09-19."
+pubDate: 2026-09-18
+category: "guide"
+platform: "multi"
+tags: []
+---
+
+PR-Agent is the self-hosted code review option that actually covers GitLab, Azure DevOps, and Bitbucket. It is MIT-licensed, community-owned since Qodo donated the project, and deployable from a CLI, Docker, or a webhook, so it runs on your own infrastructure rather than a hosted SaaS tenant.
+
+This page is about the open-source project at [github.com/The-PR-Agent/pr-agent](https://github.com/The-PR-Agent/pr-agent), read 2026-09-19. Not stated anywhere is a hosted option in the repo; the hosted path is Qodo's separate commercial product, which is a different thing.
+
+## What PR-Agent is
+
+The repository describes itself as "an open-source, AI-powered code review agent and a community-maintained legacy project of Qodo." The README is explicit that it is not the Qodo offering. Qodo donated PR-Agent to the community; it now lives in the PR-Agent org, is fully community-owned, and is open for contributions. License is MIT. As of the 2026-09-19 read it had roughly 13,000 stars and 5,500 commits.
+
+## Platform support
+
+Per the README, git providers are GitHub, GitLab, BitBucket (Bitbucket), Azure DevOps, and Gitea. Deployment options are CLI, GitHub Actions, Docker, self-hosted, and webhooks. On the non-GitHub forges the two practical paths are the CLI against a PR URL or a webhook/installation pointed at your GitLab, Azure DevOps, or Bitbucket instance.
+
+## AI models
+
+The model layer goes through LiteLLM, which means the self-hosted install can point at OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Mistral, or anything reachable through LiteLLM: Azure OpenAI, AWS Bedrock, Vertex AI, Databricks, OpenRouter, Ollama. For self-managed teams this matters: a locally deployed model via Ollama keeps model traffic off the vendor's cloud endpoint.
+
+## Data privacy
+
+If you host PR-Agent with your own key, the README's privacy note is that traffic goes between you and the model provider. For GitLab self-managed, Azure DevOps Server, or Bitbucket Data Center, that means pairing PR-Agent with an on-prem model keeps code review entirely inside your infrastructure.
+
+## Tool commands
+
+The main tools run as a comment on a PR or from the CLI: /describe, /review, /improve, /ask (free-text Q&A about the PR). Each call is a single LLM request per the README, which is the cost and latency profile to expect.
+
+## Notes
+
+/help_docs has been disabled since v0.36.1 pending a fix for a credential-exposure issue. Docker Hub images from v0.34.2 onward are published under pragent/pr-agent; older releases stay under the legacy codiumai namespace as a frozen archive.
+
+PR-Agent is not a "free native" option on any forge. It is third-party software you operate. The value on GitLab, Azure DevOps, and Bitbucket is that it fills the gap where the forges' own AI review either does not ship on the self-managed editions or is metered per use.
