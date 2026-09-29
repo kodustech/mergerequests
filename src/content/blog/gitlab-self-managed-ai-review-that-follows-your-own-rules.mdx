@@ -1,0 +1,83 @@
+---
+title: "GitLab Self-Managed AI review that follows your own rules"
+description: "AI code review on self-managed GitLab: Code Review Flow vs Duo Code Review, which one runs by seat, and how to make a review follow your team's own rules. Platform: gitlab. Verified per the docs."
+pubDate: 2026-09-29
+category: "reference"
+platform: "gitlab"
+tags: ["gitlab", "selfmanaged", "codereview", "ai"]
+---
+
+GitLab Self-Managed now runs two different AI code review features, and which one fires depends on who opens the merge request. That split is the part that matters if the reason you want AI review is enforcement of your team's own standards, because the two features are not equally equipped to carry those standards, and the one that runs is not up to you unless you configure it.
+
+This is the self-managed GitLab case specifically. The feature availability, the seat logic and the credit billing all apply to Self-Managed and Dedicated as well as GitLab.com, and the docs spell out the seat behavior that decides the reviewer.
+
+## Which reviewer runs on a self-managed GitLab instance
+
+The [GitLab Duo in merge requests](https://docs.gitlab.com/user/project/merge_requests/duo_in_merge_requests/) page, at the version documented as v19.5, describes two code review features under one reviewer handle, `@GitLabDuo`:
+
+- **Code Review Flow** is agentic. It needs no add-on and runs on GitLab Credits. Its context awareness includes repository structure and cross-file dependencies, and the analysis is multi-step agentic reasoning. It opens a review session when it runs.
+- **GitLab Duo Code Review** is non-agentic. It requires a GitLab Duo Enterprise seat. It analyzes the merge request and the file diffs within it, in a single pass.
+
+Both show up as `@GitLabDuo` in the merge request, so you cannot tell them apart by the handle. The difference shows in what the review can see, and that is the whole ballgame for standards that cross file boundaries.
+
+The trigger logic is documented and it is not "the project owner picks once." The feature that runs depends on the user who initiates the review:
+
+| Review trigger | Initiating user | Feature that runs |
+| --- | --- | --- |
+| Review requested manually | The user requesting the review | Depends on that user's seat |
+| Merge request created (not a draft) | The merge request author | Depends on the author's seat |
+| Draft merge request marked ready | The merge request author | Depends on the author's seat |
+
+If the initiating user has a GitLab Duo Enterprise seat, GitLab Duo Code Review runs. If not, Code Review Flow runs. Both can run in the same project. A user with the Owner role for the group can configure every review in the group to use Code Review Flow regardless of seat type, and when Code Review Flow runs, the credit usage is attributed to the initiating user.
+
+To see which one ran after the fact, check the merge request's activity feed. Code Review Flow starts a review session, and it also appears in the project's sessions. No session means GitLab Duo Code Review handled it.
+
+## Code Review Flow vs GitLab Duo Code Review
+
+The two native features differ on the exact dimension teams care about when they want rules enforced:
+
+| Detail | Code Review Flow | GitLab Duo Code Review |
+| --- | --- | --- |
+| Type | Agentic | Non-agentic |
+| Required add-on | None, uses GitLab Credits | GitLab Duo Enterprise seat |
+| Context awareness | Repository structure and cross-file dependencies | The merge request and its file diffs |
+| Analysis | Multi-step agentic reasoning | Single pass |
+| Session creation | Yes | No |
+| Which runs | Whichever user lacks a Duo Enterprise seat, unless the Owner pins it | Users holding a Duo Enterprise seat |
+
+The practical consequence: a rule like "this interface must match the shared contract in another module" or "new endpoints need an integration test" depends on the reviewer reading more than the diff in front of it. The single-pass feature that a Duo Enterprise seat triggers is the one that stops at the file boundary. If you have spent money on Duo Enterprise seats and expect the seat to buy you the more thorough review, the documented default gives you the opposite. GitLab documents the override, and it is worth knowing why it exists: to stop Duo Enterprise seat holders from quietly burning GitLab Credits, all reviews they initiate default to GitLab Duo Code Review, even when a group Owner has turned Code Review Flow on. An Owner can flip that default so Code Review Flow runs for everyone, and then those reviews consume GitLab Credits.
+
+## Making a review follow your team's rules
+
+Native GitLab review is configured per group and, for interaction settings, per instance. The Agent Platform documentation lists automatic reviews, custom instructions and custom comments as review capabilities, and it describes Code Review Flow as the flow that automates code review tasks and enforces coding standards across the team. On a self-managed instance that is the feature to point at when the goal is standards, for the cross-file reason above.
+
+There are two limits worth reading before you build a process on top of it. Interaction in comment threads, where you mention `@GitLabDuo` to ask about a change or request a different approach, runs on the model selected for Code Review Flow and consumes GitLab Credits separately from the flow. And GitLab states that feedback you give the reviewer does not influence later reviews of other merge requests; adding that behavior is tracked as a proposed issue (560116). So the reviewer does not learn your team's conventions from corrections. Any standard you want enforced on every merge request has to be supplied as configuration, not taught by example.
+
+The related resolve-discussion feature, where `@GitLabDuo` edits the source branch and pushes a fix, is a different flow and has its own prerequisites, including your own runners or GitLab hosted runners. It is separate from the review feature even though the same handle drives both.
+
+## When the native path is not enough
+
+Two other routes run on self-managed GitLab and are worth comparing on the same axis, rules enforcement.
+
+[PR-Agent](https://docs.pr-agent.ai/) is the open-source route, MIT-licensed and now community-owned, and it runs against a GitLab merge request as a CLI or a webhook server. The [pipeline and webhook setup for self-managed GitLab](https://mergerequests.dev/blog/pr-agent-on-self-managed-gitlab-pipeline-or-webhook/) covers the auth types, the comment events and the `CI_SERVER_FQDN` detail. PR-Agent brings its own configuration surface and a self-hosted model endpoint of your choice, which is why it shows up in the [free and self-hosted options](https://mergerequests.dev/blog/free-ai-code-review-for-gitlab-azure-devops-bitbucket/) for forges that the hosted tools skip. What it does not inherit is your repository's own conventions; you write the configuration.
+
+Kodus runs on self-managed GitLab too, and it connects by allowlisting the Kodus IP (52.55.217.197) in your network firewall, per the [quickstart](https://docs.kodus.io/en/how_to_use/quickstart). The rules surface is the reason to look at it here: Kody Rules are team-defined review rules that apply at file level or pull request level, and they can pull in context through variables, file references such as `@file` and `@repo`, and MCP functions. Centralized Config keeps every setting and rule in one repository and flows changes through pull requests, which gives review configuration version history and rollback. Reviews run on your own model key (BYOK) on every plan, and the Community tier, which is free and can be self-hosted, caps Kody Rules at 10 and plugins at 3. On the criteria that matter for standards enforcement, the ceiling is the rule scope and the code-review-as-code workflow.
+
+The three routes differ in where the rules live and how much you control:
+
+| Route | Where rules are configured | Model | Edition constraint |
+| --- | --- | --- | --- |
+| GitLab Code Review Flow | Group settings, custom instructions and comments | GitLab Credits, model per flow | Self-Managed, per the Agent Platform docs |
+| GitLab Duo Code Review | Duo Enterprise default, no cross-file context | GitLab Duo Enterprise seat | Seat-gated, single pass |
+| PR-Agent | Project config in your repo | Any endpoint via LiteLLM, including Ollama | Open source, you run it |
+| Kodus | Kody Rules, file or PR level, plus Centralized Config | Your own key, BYOK | Community free but capped at 10 rules |
+
+## What to check before you commit
+
+On a self-managed GitLab instance, decide first whether your standards are cross-file. If they are, the single-pass feature that a Duo Enterprise seat triggers is the wrong reviewer, and the fix on the native path is the Owner-level override to Code Review Flow, with the credit cost that follows. If your standards are mostly per-file and you already pay for Duo Enterprise, the default is fine and cheaper.
+
+If rules-as-configuration with history is the requirement, the native path gives you group settings, and the third-party routes give you rules stored next to the code with their own review and rollback. PR-Agent and Kodus both fit that shape; PR-Agent if you want an MIT CLI against your own model endpoint, Kodus if you want team rules and centralized config with a self-hosted Community tier.
+
+What none of them document is a reviewer that learns your conventions from your review comments and applies them later. Plan for rules you write down, not habits you expect to be inferred.
+
+Feature availability, seat behavior and credit billing on this page were read from the linked GitLab and Kodus documentation pages and carry the versions noted. Seat logic and edition support are the two things that drift fastest in this area, so re-check the merge requests page and the Agent Platform availability table before you standardize on one feature.
