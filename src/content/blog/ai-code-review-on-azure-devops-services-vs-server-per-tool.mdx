@@ -1,0 +1,74 @@
+---
+title: "AI code review on Azure DevOps: Services vs Server, per tool"
+description: "Which AI code review routes actually run on Azure Repos, split by edition: Copilot code review on Services, PR-Agent and on-prem vendors on Server (azure-devops)."
+pubDate: 2026-09-30
+category: "reference"
+platform: "azure-devops"
+tags: []
+faq:
+  - q: "Is Copilot code review available on Azure DevOps Server?"
+    a: "No. Microsoft documents Copilot code review for Azure DevOps Services, and the documentation is headed for that edition. Azure DevOps Server teams run a self-hosted reviewer such as PR-Agent, or wire a vendor integration into Service Hooks."
+  - q: "Where does Copilot code review read custom instructions from?"
+    a: "Organization and project settings in Azure DevOps, plus repository files at .github/copilot-instructions.md or .azuredevops/copilot-instructions.md, plus path-scoped *.instructions.md files that carry an applyTo value. Repository and path-scoped files are read from the pull request's target branch, so a change to them applies after it merges."
+  - q: "Can CodeRabbit or Qodo review Azure DevOps Server pull requests?"
+    a: "Neither vendor page establishes Azure DevOps Server support. CodeRabbit documents an Azure DevOps integration through a PAT or a Microsoft Entra service principal, and Qodo's on-premises guide uses dev.azure.com and Entra ID, which are Azure DevOps Services constructs."
+---
+
+Azure Repos ships in two editions and they do not have the same AI review options. Copilot code review is documented for Azure DevOps Services, the hosted service, and Microsoft labels it a limited preview. On Azure DevOps Server there is no Microsoft-native AI reviewer, so a server team runs PR-Agent from a pipeline, wires a vendor webhook into Service Hooks, or self-hosts something. The edition decides the setup work, the permissions, and how a reviewer learns your coding standards.
+
+## Copilot code review is Azure DevOps Services only
+
+The [get started page](https://learn.microsoft.com/en-us/azure/devops/repos/git/copilot-code-reviews) is headed Azure DevOps Services, and the feature carries a limited preview label with the usual terms: no SLA, and functionality can change or be removed. The stated prerequisites are an Azure DevOps organization, a Git repository in Azure Repos (TFVC is not supported), and an Azure subscription linked to the organization, because usage is billed through Azure Cost Management rather than through seats.
+
+Enablement cascades across scopes. A Project Collection Administrator turns the feature on at the organization level and can enable it for every project at once. A Project Administrator can scope it to specific projects, and a repository owner enables it per repository when project settings allow that. Individual users opt in through Preview features unless an administrator has enabled the preview for everyone in the organization.
+
+Two settings decide how the feature behaves day to day. Automatic reviews require a branch policy on each target branch where you want Copilot to review pull requests; without the policy, someone adds Copilot as a reviewer by hand. The other is the effort level: a project administrator sets the default and decides whether repository administrators may override it. Higher effort consumes more tokens, and the docs point at the billing section for the cost impact.
+
+For a team on Azure DevOps Server, none of that applies.
+
+## How Copilot reads your team's rules, and the target-branch catch
+
+Copilot code review takes instructions at the organization and project level through Azure DevOps settings, and at the repository level through a file. The [instructions page](https://learn.microsoft.com/en-us/azure/devops/repos/git/configure-copilot-code-review-instructions) accepts two paths for that file: `.github/copilot-instructions.md` or `.azuredevops/copilot-instructions.md`, both at the repository root. The second path is worth noticing if your team already keeps GitHub Copilot instructions under `.github/`.
+
+Path-scoped files go in `.github/instructions/` or `.azuredevops/instructions/` as `*.instructions.md`, with YAML front matter carrying an `applyTo` value. A path-scoped file without `applyTo` is skipped. That is a quiet failure mode: the file is committed, nothing reviews against it, and nothing reports an error.
+
+The catch that changes rollout is which branch the instructions come from. Repository-level and path-scoped files are read from the pull request's target branch. A pull request that adds or edits the instructions file is not reviewed against the new text; those rules apply once the change is merged into the target branch. If you are rolling out standards, land the instructions file on the default branch first so the reviews on later pull requests pick it up.
+
+When instructions exist at several scopes, Copilot uses all applicable ones during a review. The docs do not promise a precedence order for an organization rule that contradicts a repository rule, so conflicts are something to avoid rather than resolve.
+
+## What runs on Azure DevOps Server instead
+
+On the server edition the choice is between self-hosted tools and hosted vendors that reach into your instance.
+
+[PR-Agent](https://docs.pr-agent.ai/overview/supported_platforms/) lists Azure DevOps as a supported git provider, and the support matrix lists an Azure DevOps pipeline as supported usage, so a Server team can run it as a pipeline job or behind a webhook. It is community-owned and MIT licensed, and the [repository](https://github.com/The-PR-Agent/pr-agent) describes the deployment shapes it supports (CLI, Docker, self-hosted webhooks) plus per-provider setup guides. Review categories and prompts live in configuration files you own, and the matrix lists repo context files such as `AGENTS.md`. That combination is what makes it the default starting point for a Server team that wants review output posted on the pull request.
+
+[Open Code Review](https://github.com/alibaba/open-code-review) from Alibaba is a different shape. It installs from npm as `ocr`, works on a git diff, a commit range, or a whole-file scan, and needs an LLM endpoint rather than a forge integration. On a firewalled Server install that is convenient, and it also means the tool does not post comments to a pull request by itself unless you wire that up. Its published benchmark is the project's own, built from 50 repositories, 200 pull requests and engineer-annotated issues, and it reports higher precision than a general-purpose agent on the same model at roughly a ninth of the tokens, with lower recall as a stated trade-off.
+
+Hosted vendors document this edition less clearly. [CodeRabbit's Azure DevOps page](https://docs.coderabbit.ai/platforms/azure-devops) covers a PAT or a Microsoft Entra service principal, Project Administrator or Project Collection Administrator rights, and the Edit Subscriptions permission on Service Hooks so the webhook can be installed. The page notes that permission cannot currently be granted through the UI, and it is granted per project, which is a real constraint across a large organization. It does not split Azure DevOps Services from Azure DevOps Server, so it does not establish Server support on its own.
+
+[Qodo's on-premises Azure DevOps guide](https://docs.qodo.ai/on-prem/git-integration/install/azure-devops) deserves a close read for the same reason. It walks through a Microsoft Entra app registration, a service account added to the Azure DevOps organization with Basic access and Project Administrators, and a Service Hooks webhook subscribed to PR Created, PR Updated, PR Commented and PR Merged. The steps assume `dev.azure.com` and Entra ID, which are Azure DevOps Services constructs, while the [deployment matrix](https://docs.qodo.ai/install-qodo/deployment-model-support) marks on-prem as unsupported for Azure DevOps Cloud. Read together, the guide covers running Qodo on-premises against Azure DevOps Services. It does not document an Azure DevOps Server install, so treat the matrix row and the install guide as answering different questions.
+
+Kodus connects to Azure DevOps with a token; its [quickstart](https://docs.kodus.io/en/how_to_use/quickstart) documents no OAuth path for that provider, unlike GitHub and GitLab. The same page covers the Server case directly, since a self-hosted Azure DevOps Server instance needs Kodus's IP `52.55.217.197` allowlisted so the service can reach it. Rules come from Kody Rules in the product plus the repository files Kodus detects, and the [rule file detection docs](https://docs.kodus.io/en/how_to_use/code_review/configs/rules_file_detection) list `.github/copilot-instructions.md` and `.github/instructions/**/*.instructions.md` among the supported patterns, not the `.azuredevops/` paths. On the free self-hosted Community edition the limits matter for a rules-heavy setup: an unlicensed instance evaluates at most 10 rules per review, oldest first, and the [pricing page](https://docs.kodus.io/en/how_to_use/pricing) caps Community at 10 Kody Rules and 3 plugins.
+
+## Which routes follow your rules, by edition
+
+| Route | Azure DevOps Services | Azure DevOps Server | Where rules come from | Where the review runs |
+| - | - | - | - | - |
+| Copilot code review | Yes, limited preview | Not documented | Org and project settings, `.github/` or `.azuredevops/` instruction files | Azure Pipelines agent pool |
+| CodeRabbit | Documented (Entra service principal or PAT) | Not stated | Web UI and repository configuration files | CodeRabbit cloud, via Service Hooks |
+| Qodo on-premises | Documented through Entra ID and Service Hooks | Not documented | Repository configuration and PR commands | Your Qodo on-premises environment |
+| PR-Agent | Supported provider, pipeline or webhook | Supported provider, pipeline or webhook | JSON config, prompt files, `AGENTS.md` | Your pipeline, CLI, or webhook server |
+| Open Code Review | CLI on a git checkout | CLI on a git checkout | Path-scoped review rules | Wherever you run the CLI |
+| Kodus | Documented, token auth | Documented via IP allowlist | Kody Rules plus detected repository rule files | Kodus self-hosted or cloud |
+
+Every row above reflects the vendor or project page linked in the prose. Where a cell says not documented or not stated, the page I read does not cover that edition, and that gap is the thing to verify before a rollout.
+
+## Deciding
+
+On Azure DevOps Services, Copilot code review is the shortest path to a first automated review. An administrator flips it on at the organization level, billing runs through the subscription you already have, and reviewers appear on pull requests without a webhook to maintain. The costs are the preview status, the missing precedence order when instructions conflict, and the target-branch rule for instruction files. If your standard is that a reviewer must apply a rules file changed inside the same pull request, Copilot will not do that, and you want a tool that reads the rule at review time rather than at merge time.
+
+On Azure DevOps Server the decision is between PR-Agent and a self-hosted product. PR-Agent is the lower-commitment option: MIT, no vendor account, configuration stored in files in your repository, and a documented pipeline trigger. What you pay for it is operational work, since you own the pipeline, the model key and the webhook endpoint. Dashboards, generated rules or a UI for managing rules are where a product like Kodus starts to make sense, and the price of that is either the Community edition limits above or a commercial plan.
+
+The cheapest test before committing to any of them is one pull request. Put a single rule in the file that route reads, open a pull request that breaks the rule, and see which reviewers flag it. On Azure Repos, the file that reaches the most reviewers is `.github/copilot-instructions.md`, since Copilot reads it and Kodus detects it among its supported patterns. If the answer matters more than the setup cost, that file is the one to standardise on. If your repository already speaks `.azuredevops/`, keep both paths in sync or the tools will read different standards.
+
+For the free and self-hosted routes across all three forges, [the edition comparison](/blog/free-ai-code-review-for-gitlab-azure-devops-bitbucket/) covers what can run without a vendor account, and the [PR-Agent on Azure DevOps notes](/blog/pr-agent-on-azure-devops-pipelines-branch-policies-webhooks/) go into the pipeline and Branch Policies details. Teams on GitLab can compare the same question on [the GitLab Self-Managed rules page](/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/).
