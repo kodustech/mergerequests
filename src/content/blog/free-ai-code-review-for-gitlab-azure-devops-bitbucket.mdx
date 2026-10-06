@@ -1,70 +1,83 @@
 ---
-title: "Free AI code review for GitLab, Azure DevOps, Bitbucket"
-description: "Multi-forge guide to free AI code review on GitLab, Azure DevOps and Bitbucket: self-hosted open-source PR-Agent and open-code-review, verified 2026-09-21."
-pubDate: 2026-09-17
+title: "Free AI code review for GitLab, Azure DevOps and Bitbucket"
+description: "Which free AI code review routes actually run on multi-forge self-managed GitLab, Azure DevOps Server and Bitbucket Data Center, per the docs."
+pubDate: 2026-10-06
 category: "guide"
 platform: "multi"
 tags: []
 ---
 
-Most "free AI code review" lists are GitHub lists. They name a cloud app, link the GitHub marketplace listing, and stop. If your code lives on a self-managed GitLab, an Azure DevOps Server behind a firewall, or a Bitbucket Data Center, those lists do not apply and they do not say so. The vendor docs for the tools themselves do say so, for each edition. This page is the version of that page for teams who are not on GitHub. Everything here was read from a vendor or project page on 2026-09-21 and carries that date, because "free" and "self-hosted" move monthly.
+Most free AI code review options assume the code lives on GitHub. On GitLab Self-Managed, Azure DevOps Server or Bitbucket Data Center, the realistic choices are an open-source reviewer you host yourself and pay only for the model calls, or a hosted tool's trial. The free-for-open-source programs that dominate "free code review tools" lists are gated on GitHub and on the repository being public there, which describes very few of the teams still running a self-managed forge.
 
-The honest headline: there are two genuinely free, self-hosted, open-source routes that cover all three forges, and the cloud free tiers you hear about are narrower than the marketing suggests.
+## What free means for a self-managed forge
 
-## What "free" means for code review off-GitHub
+Self-hosted open source is the dependable category. You run the tool, it reads a git diff, and the only external dependency is a model endpoint you already control. That works behind a firewall because nothing outside has to reach into your forge.
 
-For the teams this site serves, "free" usually resolves to one of three things, and they are not the same:
+A hosted tool's free tier sits at the other end, and its shape moves. CodeRabbit's [current pricing page](https://www.coderabbit.ai/pricing) lists Essentials at $24 per developer per month billed annually, Team at $48, Advanced at $72, and a custom Enterprise tier, with a 14-day trial on all of them. No free plan appears on that page, and self-hosting is listed as an Enterprise feature. A recommendation that starts with "it's free" ends, for a GitLab Self-Managed team, on a trial and then on a sales call.
 
-- An open-source project you run yourself, paying only for the LLM calls its your model makes. This works anywhere, including air-gapped.
-- A hosted tool's free tier. These are frequently GitHub-only or gated on the repository being public on GitHub.
-- A vendor plugin that ships inside the forge's own free edition.
+Forge-native features are the last corner. GitLab's [Code Review Flow page](https://docs.gitlab.com/user/duo_agent_platform/flows/foundational_flows/code_review/) lists the tier as Free, Premium and Ultimate across GitLab.com, Self-Managed and Dedicated, and notes it can run with self-hosted models; what that costs depends on the Duo entitlement your instance carries, and the [edition split for AI review on self-managed GitLab](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/) is where the decision actually lands. Azure Repos has no comparable native reviewer on Server, because Copilot code review is documented for Services. Bitbucket's native AI review is Cloud-only, which the [Bitbucket Data Center breakdown](https://mergerequests.dev/blog/ai-code-review-on-bitbucket-data-center-whats-native-what-isnt/) covers end to end.
 
-The first category is the dependable one for GitLab self-managed, Azure DevOps Server, and Bitbucket Data Center, because it does not depend on a vendor choosing to support your edition. The second and third change by edition and by quarter.
+## Self-hosted routes that cover all three forges
 
-The two open-source projects with real off-GitHub support today are the [PR-Agent open-source project](https://github.com/The-PR-Agent/pr-agent) (community-owned, MIT) and [Alibaba's Open Code Review](https://github.com/alibaba/open-code-review). Both run as a CLI against a git repo, both let you bring your own LLM endpoint, and neither requires the forge to have native AI features. That last point is exactly why they cover the self-managed editions the cloud tools ignore.
+Three options are worth putting on the shortlist for a self-managed GitLab, an Azure DevOps Server behind a firewall, or a Bitbucket Data Center: PR-Agent, Alibaba's Open Code Review, and Kodus Community. They differ in how they attach to the forge, which matters more than the feature list when the forge is internal.
 
-## PR-Agent: the open-source route, now community-owned
+### PR-Agent after the Qodo donation
 
-As of the vendor docs read on 2026-09-21, PR-Agent is no longer a Qodo product. Qodo donated it to the open-source community and [the project now lives in the PR-Agent org on GitHub](https://github.com/The-PR-Agent/pr-agent). The docs moved to [docs.pr-agent.ai](https://docs.pr-agent.ai/). The README is explicit that this project is not the Qodo free tier, and that Qodo's hosted free version for open-source projects sits at a separate page.
+[PR-Agent](https://github.com/The-PR-Agent/pr-agent) is a community-owned project that Qodo donated, and the repo now sits in the PR-Agent org under an MIT license. It is explicitly not Qodo's product for open-source projects, which lives elsewhere, and the README notes the project is in the process of being donated to an open-source foundation.
 
-For our purposes the important part is the platform support matrix on the current docs. The core review tools, Describe, Review, Improve and Ask, are listed as available on GitHub, GitLab, Bitbucket, Azure DevOps and Gitea. CLI and app/webhook usage are supported across all of them. So the same open-source agent you would run on GitHub against a GitLab merge request, a Bitbucket pull request, or an Azure Repos pull request.
+The supported-platform matrix on [the current PR-Agent docs](https://docs.pr-agent.ai/overview/supported_platforms/) lists Describe, Review, Improve, Ask, Add Docs and Help as supported on GitHub, GitLab, Bitbucket, Azure DevOps and Gitea, with CLI and app/webhook deployment available on all five. Gerrit and CodeCommit are registered providers kept out of that main table, and they do not support GitHub-flavored markdown, so `/describe` drops the semantic file-type sections there.
 
-Edition detail matters and is where the docs are honest. The tagging bot is not listed for GitLab. "Ask on code lines" is listed only for GitHub. /help_docs is temporarily disabled since v0.36.1 pending a fix for a credential-exposure issue. So even the open-source route has features that only work on one provider.
+A few rows in that matrix are provider-specific, and they are the ones that decide whether the tool feels native on your forge. The tagging bot is GitHub-only. Several tools run but post their output as a comment instead of applying it where the provider cannot write files. `/help_docs` has been disabled since v0.36.1 while a credential-exposure issue is fixed.
 
-Installation is `pip install pr-agent`, and you bring your own model key. The docs list OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Mistral, and anything reachable through LiteLLM, which includes Azure OpenAI and Ollama. For a self-managed GitLab behind a firewall, that means the only external dependency is whichever model endpoint you already use.
+Where a deployment lives is worth reading before you upgrade anything, because the Docker namespace moved. Releases from 0.34.2 are published under `pragent/pr-agent`; anything up to and including v0.31 stays at the frozen `codiumai/pr-agent` namespace with no new pushes. If a pipeline pins an old image reference, that is the first thing to fix.
 
-One operational detail worth noting before you upgrade anything: the Docker namespace moved. Docker images from 0.34.2 are published under `pragent/pr-agent`; older releases up to v0.31 remain at the frozen `codiumai/pr-agent` namespace, per the project README dated 2026-09-21.
+The newer part of PR-Agent is the instructions layer. [Agent Skills](https://docs.pr-agent.ai/core-abilities/agent_skills/) let you keep a curated set of `SKILL.md` files on the host and have their name, description and body injected into `/review`, `/improve`, `/describe` and `/ask`. Two constraints are worth knowing before you plan around it. Skills are disabled by default, and `skills.paths` can only be set at host level, never from a repository's own `.pr_agent.toml`, because a repo that could redirect the filesystem scan could point the tool at files like `~/.ssh/*` and pull them into a model prompt. A repo can only opt in or size the token budget. The other constraint is architectural: PR-Agent makes single-shot model calls, so the standard's progressive-disclosure model does not apply, and every enabled skill's text goes into every pull request prompt up to the token cap. Files in `scripts/` and `assets/` are skipped, so a skill that depends on running a script will not work.
 
-## Open Code Review: the older Alibaba tool, now open source
+Deployment detail per forge is where the interesting bits are, and I have separate notes on [running PR-Agent on self-managed GitLab](https://mergerequests.dev/blog/pr-agent-on-self-managed-gitlab-pipeline-or-webhook/) and on [PR-Agent on Azure DevOps](https://mergerequests.dev/blog/pr-agent-on-azure-devops-pipelines-branch-policies-webhooks/), since Azure Repos needs Branch Policies rather than a YAML trigger.
 
-[Open Code Review](https://github.com/alibaba/open-code-review) originated as Alibaba's internal AI code review assistant and was incubated into an open source project. It is a CLI, Apache-2.0, and forge-agnostic in the sense that it operates on a git diff rather than a forge integration. Configuration is an LLM endpoint.
+### Open Code Review
 
-The workflow, from the project readme dated 2026-09-21:
+[Open Code Review](https://github.com/alibaba/open-code-review) is Alibaba's internal review assistant, released as an Apache-2.0 CLI. Because it operates on a git diff instead of on a forge API, it does not care where the repository is hosted, and it needs Git 2.41 or newer. Install is `npm install -g @alibaba-group/open-code-review`, then `ocr config provider` and `ocr config model`.
 
-```
-npm install -g @alibaba-group/open-code-review
-ocr config provider
-ocr config model
-cd your-project
-ocr review
-```
+The command set is broader than a single review pass. `ocr review` covers staged, unstaged and untracked changes in the workspace, `ocr review --from main --to feature-branch` covers a branch range, `ocr scan` reviews whole files with no git history, and `ocr delegate` lets a host coding agent perform the review itself, in which case no separate model key is needed.
 
-The `ocr review` command reads staged, unstaged and untracked changes; `ocr review --from main --to feature-branch` covers a branch range; `ocr scan` reviews whole files with no git history, which matters for auditing unfamiliar code. A delegation mode lets a host AI agent supply the model so you do not need a separate key.
+The project's headline claim is a precision argument, and the numbers are its own. Its benchmark is built from 50 popular repositories, 200 real pull requests, 10 languages and 1,505 annotated issues cross-validated by more than 80 senior engineers, and the README states that it beats a general-purpose agent on the same underlying model on precision and F1 while using roughly a ninth of the tokens. Recall is deliberately lower. Treat that as a design claim from the project rather than an independent result, and note that the trade-off it describes is real for review tooling: fewer comments that are more often correct reads better in a busy pull request than broad coverage with a long tail of noise.
 
-The design is a hybrid. Deterministic logic handles file selection, file bundling and rule matching, while an agent does the dynamic work of reading context and deciding where comments belong. The project publishes a benchmark, built from 50 popular repositories and 200 pull requests across 10 languages, comparing itself against general-purpose coding agents on the same underlying model. The figures are theirs, not independently verified here, and I would treat the precision-versus-recall trade-off it describes as a design claim rather than a settled result.
+### Kodus Community
 
-For a self-managed forge the appeal is the same as PR-Agent: it runs where the forge runs, needs no forge-side integration, and sends diffs to a model endpoint you control.
+[Kodus](https://docs.kodus.io/en/how_to_use/pricing.md) publishes a free Community tier that runs self-hosted or on their cloud, with reviews unlimited on every plan because the model calls run on your own provider key. That combination is what makes it relevant here: free, self-hostable, and not gated on the repository being public on GitHub.
 
-## What the cloud "free" tiers do and do not cover
+Two limits shape whether it fits. Community allows up to 10 Kody Rules and 3 plugins, and a self-hosted instance running without a valid license evaluates at most 10 rules per review, oldest first, so an instance with a larger rule library will silently stop firing rules past that point. The [rules file detection](https://docs.kodus.io/en/how_to_use/code_review/configs/rules_file_detection.md) list is long for a tool at this stage: `AGENTS.md` and its dotfile variants, `.cursorrules` and `.cursor/rules/**/*.mdc`, `.github/copilot-instructions.md` and `.github/instructions/**/*.instructions.md`, `CLAUDE.md`, `.windsurfrules`, `.aider.conf.yml`, `.sourcegraph/**/*.rule.md`, plus a generic `docs/coding-standards/**` pattern. Matching is case-insensitive, nested files are discovered and scoped to their directory, and `@file` references inside a rule file are followed one level deep. Files that match the repository-rules template are imported verbatim without an LLM rewriting them, which is the difference between your standards surviving import and being paraphrased.
 
-The hosted tools with recognizable free tiers are not the free-everywhere answer. CodeRabbit and Qodo both advertise open-source free versions, and both document which forge editions they support. My earlier on this site covers the self-hosted edition split in detail for [CodeRabbit and Qodo](https://mergerequests.dev), but the short version for the free tiers is the fundraising catch: most "free for open source" is GitHub-shaped because that is where open source is measured.
+Connecting it to a self-managed forge is where the free tier gets plainer. The quickstart documents OAuth (recommended) or token for GitHub and GitLab, and token only for Bitbucket and Azure DevOps, with no OAuth path for either. Internal GitLab, Bitbucket Data Center and Azure DevOps Server instances connect by allowlisting a fixed IP. On the licensing point, the repository is public and tagged open source, but GitHub's API reports the license as "Other" rather than an OSI identifier, so if an approved license matters to procurement, read the license file rather than the tag.
 
-Azure DevOps surfaces its own distinction. Microsoft's documented AI path for Azure DevOps is an [MCP server](https://learn.microsoft.com/en-us/azure/devops/mcp-server/mcp-server-overview), and the GitHub Copilot code review feature that does land in Azure Repos is documented on the Azure DevOps Services edition. There is no free native AI PR reviewer built into Azure DevOps Server; teams there use the open-source CLIs above or a webhook bridge.
+## The hosted free tiers, measured against self-managed editions
 
-## Deciding for a self-managed forge
+CodeRabbit and Qodo are the two hosted tools most often recommended to teams asking this question, and neither free path is shaped for a self-managed forge. CodeRabbit's pricing page carries no free plan, only the 14-day trial, and separately lists per-developer hourly review limits that rise by tier, with usage-based reviews at $0.25 per reviewed file past the included allowance. Qodo's free offering for open-source projects is described on the PR-Agent README as a distinct product from the open-source agent, and it is aimed at public projects.
 
-For a team on self-managed GitLab, Azure DevOps Server, or Bitbucket Data Center, the decision tree is short. If you want no third-party SaaS touching your code, run PR-Agent or Open Code Review as a CLI or webhook with a model endpoint you already have. Choose PR-Agent when you want the established tool with the richer per-forge documentation and the /review, /improve, /ask workflow. Choose Open Code Review when you want Alibaba's precision-focused hybrid and the whole-file scan, or when an npm-installed CLI fits your pipeline better than a Python package.
+For the on-prem side of both vendors, what they document differs by forge and edition, and the [per-docs comparison of CodeRabbit and Qodo for self-hosted deployments](https://mergerequests.dev/blog/self-hosted-ai-code-review-coderabbit-and-qodo-per-their-docs/) is where that belongs. The short version for this page is that self-managed coverage is an enterprise arrangement in both cases, which is exactly why the free routes above exist.
 
-If you are on a cloud forge you can compare the hosted free tiers, but read the vendor's edition support page first. The free-tier wording almost never covers the self-managed editions, and that gap is exactly the one most summaries gloss over.
+## Free AI code review routes compared
 
-Every claim in this page was read from the linked project or vendor page on 2026-09-21. If you are reading this later, re-check the support matrix on docs.pr-agent.ai and the open-code-review readme, because free-tier scope and edition support are the two things that drift fastest.
+Self-hosted and free routes:
+
+| Route | Cost model | How it attaches to the forge | Own model endpoint | Limit that changes a rollout |
+| - | - | - | - | - |
+| PR-Agent | MIT, community-owned | CLI, Docker, webhook/app; GitHub, GitLab, Bitbucket, Azure DevOps, Gitea | Yes, via LiteLLM (Azure OpenAI, Bedrock, Ollama) | `/help_docs` disabled since v0.36.1; skills are text-only and loaded into every prompt |
+| Open Code Review | Apache-2.0 | CLI on a git diff, no forge integration | Yes, or delegate to a host agent | Requires Git 2.41; benchmark is the project's own |
+| Kodus Community | Free tier, self-hosted or cloud | PR bot; token-only connect for Bitbucket and Azure DevOps | Yes, BYOK | 10 Kody Rules and 3 plugins; unlicensed self-hosted evaluates 10 rules per review |
+
+Hosted tiers with a free entry point:
+
+| Tool | Free option as documented | Self-managed editions |
+| - | - | - |
+| CodeRabbit | 14-day trial; no free plan listed on the pricing page | Self-hosting listed as an Enterprise feature |
+| Qodo | Free version for open-source projects | Documented separately per forge and target; not stated on the pricing page |
+
+## Picking one for a self-managed forge
+
+If the constraint is that no third party reaches into the forge, the decision is between two shapes of tool rather than three products. PR-Agent and Open Code Review both run as a CLI or webhook with a model endpoint you already have, and the difference is in the review model. PR-Agent reviews through the forge, which is why it has per-provider docs, comment commands and, on some providers, tools that can only post a comment rather than apply a change. Open Code Review reviews a diff, which is why it works anywhere and why it has no comment commands or PR descriptions at all. Choose PR-Agent if you want the reviewer to behave like a native bot in merge requests, and Open Code Review if you want a precision-biased pass over changes and whole files from a pipeline.
+
+Kodus Community is the option to look at when the reason you want a reviewer is your own written standards. Its rule import covers more of the instruction-file formats teams have already checked into repositories than the alternatives here, and per-directory scoping is built into detection, which matters in a monorepo. The trade-off is the ceiling on Community: 10 Kody Rules and 3 plugins, with the unlicensed self-hosted rule cap on top, so a team with a large standards library is choosing between paying for a licence and pruning rules.
+
+Whatever you pick, check the vendor or project page for your edition before you commit to it, because edition support and free-tier scope drift faster than the rest of the documentation. The Docker namespace change in PR-Agent and the absence of a free plan in CodeRabbit's current lineup are both recent examples of the same thing: a "free" answer that was true last year and is not true in your upgrade path.
