@@ -1,0 +1,91 @@
+---
+title: "Azure Repos merge gating for AI reviewers: the status check policy"
+description: "How an AI reviewer actually blocks a merge in Azure Repos (azure-devops): the required status check policy, genre/name, authorized identity, reset conditions, and why the Copilot review policy only requests."
+pubDate: 2026-10-13
+category: "reference"
+platform: "azure-devops"
+tags: ["azuredevops", "azurerepos", "codereview", "branchpolicies"]
+faq:
+  - q: "Can an AI code reviewer block a merge in Azure Repos?"
+    a: "Only if it posts a pull request status and a required status check branch policy matches that status's genre and name. Review comments and votes don't change whether a pull request can complete, because completion is governed by branch policies."
+  - q: "Does the Automatically request Copilot code review policy block merges?"
+    a: "No. That branch policy requests a Copilot review on pull requests targeting the configured branch. Microsoft documents no route for Copilot to post a status check on Azure Repos, and none of the native status checks in its reference belong to the feature."
+  - q: "What happens if a status check policy exists but the service never posts a status?"
+    a: "The policy shows as not set on the pull request, and a notSet value is treated as pending, so a required policy blocks completion until the service posts a status."
+---
+
+On Azure Repos, an AI reviewer can only stop a merge if a branch policy requires a status check whose genre and name match a status that reviewer posts. Review comments and votes leave the Complete button where it was. The mechanism is the PR Status API plus a required status check policy, and it lives on the branch rather than in the reviewer's own settings. That distinction decides whether a tool is a merge gate or an advisory commenter on your pull requests.
+
+## What actually blocks completion in Azure Repos
+
+Azure Repos gates merges through branch policies, and for an external service the relevant one is the status check policy. The [reference of available status checks](https://learn.microsoft.com/en-us/azure/devops/repos/git/available-pr-status-checks) spells out how a posted status maps to merge behavior:
+
+| Status | With a required policy | With an optional policy |
+|---|---|---|
+| `succeeded` | Unblocks the policy | Informational |
+| `failed` | Blocks merge | Informational |
+| `error` | Blocks merge | Informational |
+| `pending` | Blocks merge, awaiting result | Informational |
+| `notApplicable` | Bypasses the policy requirement | Informational |
+| `notSet` | Treated as pending | Informational |
+
+Two entries matter when you wire up a reviewer. `notApplicable` is the documented way to exempt a specific pull request from a required policy without editing the policy, which is useful when a check genuinely doesn't apply to a change such as a docs-only edit. `notSet` behaving as pending means a service that creates the policy but never posts a status leaves the pull request permanently blocked. That's the failure mode to watch for during a first rollout, and it's a quiet one because nothing errors.
+
+The same page lists what Azure DevOps posts on its own: `AdvancedSecurity/AllHighAndCritical` and `AdvancedSecurity/NewHighAndCritical` from GitHub Advanced Security, plus `{pipeline-name}/codecoverage` from Azure Pipelines. Both Advanced Security checks need Advanced Security enabled on the repository and a build validation policy with the scanning tasks configured to wait for processing, otherwise the statuses don't reflect the latest scan. Everything else arrives through the [PR Status API](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-statuses), and the calling identity needs Contribute to pull requests on the repository before it can post anything.
+
+Edition scope is worth pinning down here. The branch policies page covers Azure DevOps Services and Azure DevOps Server, so the policy mechanism is available on both. The reference of native first-party status checks is headed Azure DevOps Services, which is the list Microsoft maintains. A Server team configures status check policies the same way; the checks that exist out of the box are the Services-side ones.
+
+## Configuring the status check policy for a third-party reviewer
+
+The [how-to for an external service](https://learn.microsoft.com/en-us/azure/devops/repos/git/pr-status-policy) walks through adding the policy under Branch policies, then Status checks. The fields are where the behavior gets decided.
+
+Policy requirement sets optional or required, and only required blocks completion. An optional policy still shows the status on the pull request, which is a reasonable way to run a reviewer in observe mode before it can hold up merges.
+
+Authorized identity restricts which identity's status counts toward the policy. Leaving it open means any account that can post a status to the repository can satisfy the check, which is a real gap in a large organization where integrations accumulate. Pinning it to the reviewer's service account or service principal is the tighter setup, and it turns credential rotation into a merge-gating concern rather than just an integration concern. The [expiry paths for these integrations](/blog/ai-code-review-credentials-by-forge-what-expires-in-2026/) are worth checking against whatever you configure here.
+
+Reset conditions decide whether a posted status stays valid when the source branch changes. For a check tied to a specific commit, the documented guidance is to reset the status whenever there are new changes. Skip that and a reviewer's approval of an earlier revision keeps the gate open for code it never read.
+
+Policy applicability has two settings. Apply by default enforces the policy from pull request creation, and the PR can be exempted by posting `notApplicable`. Conditional means the policy doesn't apply until the first status is posted, which supports an orchestration pattern where one policy evaluates which others should apply and then posts statuses to activate them.
+
+There's a practical detail that trips people up on the first setup. The status dropdown only lists genre and name values for services that have already posted at least one status to a pull request. A new integration that hasn't run yet won't appear in the list, so you type `genre/name` directly into the field. Until the service posts, the policy shows as not set on the pull request, and per the table above that reads as pending.
+
+## Iteration status and when a re-review is required
+
+The [pull request extensibility page](https://learn.microsoft.com/en-us/azure/devops/repos/git/pull-request-status) covers the difference between posting a status against a pull request as a whole and posting it against a specific iteration. Iteration status is what makes a check revision-specific: it lets the policy require that the latest iteration has a status of `succeeded`, so a push invalidates the previous approval. That only works when reset conditions are set to reset on new changes, which the docs call out directly.
+
+There's a documented ceiling attached to it. A pull request with more than 100,000 modified files doesn't support iterations, so further commits land without creating a new iteration, and posting a status against a non-existent iteration returns an error. For a review integration that means the gate falls back to pull request level on very large changes. That's an edge case until an agent opens a branch-wide refactor, and then it isn't.
+
+## The Copilot branch policy that requests a review and nothing more
+
+Azure Repos has a Copilot code review feature, and its branch policy is easy to misread. The [get started page](https://learn.microsoft.com/en-us/azure/devops/repos/git/copilot-code-reviews) states that feature enablement and automatic review are separate settings, and the "Automatically request Copilot code review" policy does what its name says: it adds Copilot as a reviewer on pull requests targeting the configured branch. Microsoft documents no route for Copilot to post a status check on Azure Repos, and none of the native checks in the status check reference belong to the feature. So this policy changes who reviews the pull request, and the merge gate stays where it was.
+
+Enablement runs across three scopes, which is worth planning for. A Project Collection Administrator turns the feature on for the organization, a Project Administrator can scope it per project, and a repository owner enables it per repository when project settings allow overrides. Effort level is set at the project level with an option to let repositories override, and higher effort consumes more tokens. Billing runs through an Azure subscription linked to the organization and Azure Cost Management, which is a different procurement path from a per-seat plan.
+
+The preview note attached to the feature states limited preview, no SLA, and that functionality may change or be removed. The documentation is scoped to Azure DevOps Services. Teams on [Azure DevOps Server](/blog/ai-code-review-on-azure-devops-services-vs-server-per-tool/) get none of it and need a self-hosted reviewer instead.
+
+## What each AI reviewer's docs establish about gating
+
+I read what the vendors document for Azure Repos rather than assuming a general claim about blocking carries over to this forge.
+
+| Tool | Azure Repos route | Documented blocking mechanism | What it means for the gate |
+|---|---|---|---|
+| CodeRabbit | PAT or Microsoft Entra service principal, plus a Service Hooks webhook | Pre-Merge Checks run in off, warning or error mode; error blocks only when paired with the Request Changes workflow. Its Azure DevOps permission table lists posting statuses among the capabilities it needs. | Blocking is configured inside CodeRabbit, and a status route is present in the documented permissions. Pairing it with a required status check policy is what makes the block affect Azure Repos completion. |
+| Qodo | Portal connection to Azure DevOps; the deployment matrix marks on-prem unsupported and air-gapped N/A for Azure DevOps Cloud | The severity threshold filters which findings appear as inline comments, and a below-threshold finding still appears in the summary | Findings are advisory on Azure Repos. Self-hosted Azure Repos is not a documented deployment option, so the gate has to come from whatever posts a status. |
+| Kodus | Azure Repos webhook through Service Hooks, with a signed token and one subscription per event type | Suggestions post non-blocking by default; Request Changes is optional, and the compliance cookbook says to enable it so violations block merge. Status shows as a comment on Azure DevOps because there is no reaction API. | Request Changes is a review state. Whether it gates completion depends on the branch policies on the target branch, so the status check policy is still the lever. |
+| Copilot code review | Native, Services only, limited preview | None documented; the branch policy requests a review | Advisory. The gate remains a status check policy or the minimum reviewers policy. |
+
+Two rows deserve a second look.
+
+Kodus's Azure Repos webhook is the one that requires an encrypted `token` query parameter, produced by encrypting `CODE_MANAGEMENT_WEBHOOK_TOKEN` with `CODE_MANAGEMENT_SECRET` using AES-256-CBC, and Kodus returns 403 Unauthorized when it's missing. Each event type needs its own service hook subscription, so pull request created, updated, merge attempted and comment events mean four subscriptions. Create only the first one and updates and comments won't trigger a review, with nothing in the UI indicating the gap.
+
+Qodo's [deployment matrix](https://docs.qodo.ai/install-qodo/deployment-model-support) is the most explicit vendor statement I've found on where each tool can run, and it marks Azure DevOps Cloud as on-prem unsupported with air-gapped N/A. The [on-prem Azure DevOps guide](https://docs.qodo.ai/on-prem/git-integration/install/azure-devops) walks through Entra app registration and Service Hooks against `dev.azure.com`, which are Azure DevOps Services constructs. Read together, Qodo on-premises targets Azure DevOps Services, and self-hosted Azure Repos isn't covered.
+
+CodeRabbit's [Azure DevOps page](https://docs.coderabbit.ai/platforms/azure-devops) is detailed on setup, including the note that the Edit Subscriptions permission on Service Hooks cannot currently be granted through the UI and is granted per project, which is real work across a large organization. The [Pre-Merge Checks page](https://docs.coderabbit.ai/pr-reviews/pre-merge-checks) is explicit that warning is the default enforcement mode and that error only blocks when paired with the Request Changes workflow, so a team that enables checks and assumes merges are gated has an open gate.
+
+If you want a self-hosted reviewer that posts statuses directly, [PR-Agent wired into Azure Repos branch policies and Service Hooks](/blog/pr-agent-on-azure-devops-pipelines-branch-policies-webhooks/) is the configuration to study, because it runs in a pipeline you control and can call the PR Status API with a genre and name you choose.
+
+## What to check before you rely on a reviewer
+
+The gate is a branch policy, so the setup work happens in Azure Repos no matter which reviewer you pick. Before treating any AI reviewer as a merge gate, confirm that the service posts a status through the PR Status API, note the exact genre and name it uses, create a required status check policy with those values, and pin the authorized identity to the reviewer's service account. Then push a commit after a passing review and confirm the policy resets. A gate that stays green after a new commit is approving code nobody read.
+
+For teams that want the reviewer to stay advisory, the optional policy gives you the check on the pull request without blocking completion, and the status values still render in the Policies section. That's a sensible place to start, since it keeps the first rollout from freezing merges while you learn what the reviewer actually catches.
