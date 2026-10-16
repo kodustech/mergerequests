@@ -1,0 +1,54 @@
+---
+title: "What GitLab, Azure DevOps and Bitbucket hide in large PRs"
+description: "Large PRs hit two separate caps: the forge's diff rendering limits and the reviewer's own file limit. Documented numbers per forge for GitLab, Azure DevOps and Bitbucket (multi)."
+pubDate: 2026-10-16
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+---
+
+A large pull request runs into two different limits, and they fail in different ways. The forge decides how much of the diff it will render, and past that point you get a partial view with a warning on the screen. The reviewer decides how many files it will analyze, and past that point you get no review at all. Raise the first number and leave the second alone, and you still end up with a pull request that nobody, human or automated, actually looked at.
+
+That split matters more now that agent-authored changes arrive in bigger chunks. It also matters because the two numbers live in different places, are owned by different people, and are quoted inconsistently.
+
+## The forge cap: how much of the diff renders
+
+GitLab is the only one of the three that publishes a full set of diff limits with both defaults and maximums, and it is the only one where the ceiling depends on the offering you are on. On [GitLab Self-Managed and GitLab Dedicated](https://docs.gitlab.com/administration/diff_limits/), the defaults are a 200 KB maximum diff patch size, 1,000 changed files, and 50,000 changed lines, raisable to 500 KB, 3,000 files, and 100,000 lines. When a diff reaches 10 percent of any of those three values, GitLab collapses the files behind an expand link. Past any of them, the diff is shown as Too large and cannot be expanded in the UI at all. The line that catches people out is that these limits apply to the UI and to the API endpoints that return diff information, so a bot reading the merge request through the API sees the same truncation a human does. On GitLab.com, the same page states that diff limits cannot be configured, which makes it the one GitLab offering where you have no lever.
+
+Bitbucket splits by edition, and the two editions behave nothing alike. [Bitbucket Cloud](https://support.atlassian.com/bitbucket-cloud/docs/limits-for-viewing-content-and-diffs/) caps a single file's diff at 2,000 changed lines or 102,400 bytes of raw diff data, the entire diff at 8,000 changed lines, and the whole diff at 200 files. None of those are configurable; when you hit them the pull request stops rendering as one page and loads files individually instead. [Bitbucket Data Center](https://support.atlassian.com/bitbucket-data-center/kb/the-diff-for-this-file-is-too-large-to-render/) works off `page.max.diff.lines` (10,000 by default) and `page.max.changes` (1,000 by default) in `bitbucket.properties`. So a Data Center admin can move those numbers, and a Cloud admin cannot. The symptom on Data Center is the message about the diff for this file being too large to render, and the documented fix is raising the property to at least double the file length, not tweaking the review workflow.
+
+Azure Repos publishes its caps as notes inside the review flow rather than as a limits page. [Review and comment on pull requests](https://learn.microsoft.com/en-us/azure/devops/repos/git/review-pull-requests?view=azure-devops) states that the summary view does not show changes for a file larger than 0.5 MB, and that for a single file larger than 5 MB the diff view shows truncated content, with the docs pointing you at a local diff tool for the full thing. Those two pages carry the Services and Server monikers, so unlike Copilot code review, the rendering behavior is the same on both editions.
+
+| Forge and edition | Per-file cap | Whole-diff cap | Configurable |
+|---|---|---|---|
+| GitLab Self-Managed / Dedicated | part of a 200 KB patch size, 1,000 files, 50,000 lines set | same set | Yes, up to 500 KB, 3,000 files, 100,000 lines |
+| GitLab.com | same defaults, fixed | same | No |
+| Bitbucket Cloud | 2,000 changed lines or 100 KB | 8,000 changed lines, 200 files | No |
+| Bitbucket Data Center | `page.max.changes` 1,000 | `page.max.diff.lines` 10,000 | Yes, in `bitbucket.properties` |
+| Azure Repos (Services and Server) | summary view hides files over 0.5 MB; single file over 5 MB truncated in diff view | not stated | Not stated |
+
+## The second gate: the reviewer's own file cap
+
+The forge cap degrades a view. A reviewer's file cap does something harsher: it skips the pull request. That is a different failure mode, and it is the one that produces a merge request with zero automated comments and no obvious reason why.
+
+Kodus documents both numbers. The [review flow page](https://docs.kodus.io/en/how_to_use/code_review/flow) lists "PR exceeds the configured file limit" as a skip condition, and the [troubleshooting page](https://docs.kodus.io/en/how_to_use/code_review/troubleshooting) puts the working figure at 2,000 reviewable files after the ignored-file patterns are applied. A pull request with 2,500 files where 600 are lock files still gets reviewed, because the cap counts what is left after filtering. When it does skip, the status emoji is 👀 rather than a review, and on Azure DevOps and Bitbucket there is no reaction API, so that emoji arrives as a comment instead of a reaction. A team watching for a reaction on those two forges will see nothing.
+
+CodeRabbit does not publish a maximum diff size, so I am not going to invent one. What its [automatic review controls](https://docs.coderabbit.ai/configuration/auto-review) document is volume management by commit and path rather than by size: `auto_pause_after_reviewed_commits` defaults to 5 and pauses incremental reviews after that many reviewed commits, `drafts` defaults to false so draft pull requests are skipped, `base_branches` defaults to the default branch only, and `ignore_usernames` skips whole authors. `path_filters` is the lever for excluding lock files and generated code from a review. The practical consequence is that a 60-commit pull request can stop getting incremental reviews at commit five without anyone having configured anything, which reads as a broken integration unless you know the default is there.
+
+Qodo's constraint is about display rather than skipping. Its severity threshold applies to inline comments only, so a finding below the threshold still shows up in the summary, and the resolved-findings overflow section collapses on GitHub, GitLab and Azure DevOps but not on Bitbucket or Gerrit, where findings past the breakpoint do not display in the pull request. That is worth knowing before you conclude a reviewer found nothing on Bitbucket.
+
+## Why raising the GitLab limit does not fix the skip
+
+The tempting move on self-managed GitLab is to raise the diff limits to their maximums and call the problem solved. That does address the truncation, including the API truncation, and it is genuinely the right call for a large monorepo. It does not touch the reviewer's own cap, which is a separate number in a separate product, and it does not help a team on GitLab.com where the value cannot be changed. If your chain includes a tool that skips at 2,000 files, a 3,000-file ceiling on the GitLab side just means GitLab will render a diff the reviewer will refuse to read.
+
+The same logic runs the other way. A team that tunes its reviewer's ignored-file patterns down to something aggressive will get reviews on pull requests whose diffs the forge still truncates. In that case the reviewer is commenting on a partial view, and a finding about a file that was never rendered is a finding about code it did not see.
+
+The judgment I would make from these numbers: for most teams the reviewer cap deserves attention before the forge cap does. Truncation is visible, the UI tells you a file was too large, and a human reviewer can still open the file locally. A skip is silent. It looks exactly like a reviewer that had nothing to say, and the pull request merges on that basis.
+
+## What to check before you tune anything
+
+Start by identifying the offering, because it decides whether you have a lever at all. GitLab Self-Managed and Bitbucket Data Center are tunable; GitLab.com and Bitbucket Cloud are not. Then write down the smallest cap anywhere in your chain, forge and reviewer, and treat that as your real limit rather than the largest one.
+
+If your pull requests are produced by coding agents, the file count grows faster than the line count, which is the axis these caps are usually set on. Filtering generated files and lock files out of review is the cheapest lever on both sides, since it reduces the number a reviewer counts. Where that is not enough, splitting by concern beats raising limits, because every number in the tables above is enforced somewhere you may not control.
+
+Two related pieces on this site go deeper on the self-managed side: [which AI review routes actually run on GitLab Self-Managed](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/) and [what is native on Bitbucket Data Center and what is not](https://mergerequests.dev/blog/ai-code-review-on-bitbucket-data-center-whats-native-what-isnt/). For the Azure Repos edition split, [Services versus Server per tool](https://mergerequests.dev/blog/ai-code-review-on-azure-devops-services-vs-server-per-tool/) covers what changes when you are not on the hosted service.
