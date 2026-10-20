@@ -1,0 +1,118 @@
+---
+title: "CODEOWNERS and reviewer routing on GitLab, Azure Repos and Bitbucket"
+description: "multi: how GitLab, Bitbucket and Azure Repos route reviewers by file path, where CODEOWNERS precedence diverges per forge, and why path-scoped AI review rules are a separate mechanism."
+pubDate: 2026-10-20
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+faq:
+  - q: "Does CODEOWNERS block a merge?"
+    a: "Not on its own. On GitLab a code owner section requires approval on protected branches. On Bitbucket, code owners are suggested reviewers, so the block comes from a merge check. On Azure Repos the equivalent policy has an explicit Is Blocking flag."
+  - q: "Do GitLab CODEOWNERS sections override each other?"
+    a: "No. Sections are evaluated separately and always enforced, and the last matching entry inside each section is used. Owners from several sections can apply to the same file."
+  - q: "Which branch does Bitbucket read CODEOWNERS from?"
+    a: "The target branch of the pull request, on both Bitbucket Data Center and Bitbucket Cloud."
+  - q: "Does Azure Repos support CODEOWNERS?"
+    a: "There is no CODEOWNERS file. Path-based routing is the Automatically included reviewers branch policy, which is off by default."
+---
+
+CODEOWNERS answers one question about a pull request: given this diff, which humans should be added as reviewers. That is all it does. It does not decide whether the merge can complete, and it does not decide which rules an AI reviewer applies to the files it touches. On GitLab, Azure Repos and Bitbucket those are three separate mechanisms, and the three forges disagree on the parts that start to matter once the ownership file grows: precedence order, whether sections stack, what a rule with no owners means, and whether any of it can block a merge.
+
+## CODEOWNERS is routing, not gating
+
+On GitLab and Bitbucket, a code owner entry produces a reviewer. GitLab adds owners to the merge request and groups them by section in the MR widget. Bitbucket Data Center compares every rule in the file against the pull request diff and adds the matching users as suggested reviewers when the pull request is created.
+
+The word suggested is doing real work on Bitbucket. Suggested reviewers are a notification, and removing one from the reviewer field is a normal action. The CODEOWNERS file on its own does not stop a merge. If you want the merge blocked, that comes from a merge check configured somewhere else entirely.
+
+Azure Repos never had a CODEOWNERS file to begin with. Path-based reviewer routing exists as a branch policy called Automatically included reviewers, which ships off and has to be enabled per branch. Every branch policy in Azure Repos defaults to off, and this one is no exception.
+
+That difference changes the order you set things up in. On GitLab and Bitbucket you commit a file. On Azure Repos you configure a policy in the portal or through the CLI, and whatever sits in the repository does not matter.
+
+## GitLab CODEOWNERS: sections are enforced separately
+
+GitLab reads CODEOWNERS as one or more sections, and the section behaviour is the part people get wrong. Per the [reference on CODEOWNERS syntax](https://docs.gitlab.com/user/project/codeowners/reference/), sections are analyzed separately and always enforced. When a path matches multiple entries inside one section, only the last matching entry in that section is used. When a path matches entries in several sections, the last matching entry in each section is used, so owners from different sections stack on the same file.
+
+A line that sits outside any section is treated as its own unnamed section. Sections do not override each other, so a rule below a section header cannot cancel an owner assigned above it.
+
+Sections can carry their own requirements. `[Section name]` requires approval by default, `^[Section name]` makes the section optional, and `[Section name][5]` requires five approvals from that section. Section names are case-insensitive, and two sections sharing a name are combined.
+
+One detail from the same page is worth knowing before you debug a surprising owner: inline comments are not supported, and any code owners listed inside a comment are still parsed. A commented-out line with a username in it can still assign a reviewer.
+
+Code owners on GitLab are Premium and Ultimate across GitLab.com, Self-Managed and Dedicated. That is a licensing gate that has nothing to do with whether the instance is self-hosted, and it is easy to miss when a team moves from Cloud to Self-Managed and assumes the file will behave the same way.
+
+## Bitbucket Data Center reads the file bottom to top
+
+Bitbucket Data Center takes `.bitbucket/CODEOWNERS`, and the file is branch-based: Bitbucket always uses the version on the target branch of the pull request, so the same repository can route different owners on different branches. The [code owners page for Data Center 10.5](https://confluence.atlassian.com/bitbucketserver/code-owners-1296171116.html) lays out the rest.
+
+Precedence runs bottom to top. The last rule in the file has the highest precedence, and the docs treat the top of the file as the fallback. This is the reverse of how most people read a config file, and it is the usual source of wrong reviewers when a file is generated or appended to over time.
+
+A rule with a path and no owners is still matched, and it exists to suppress code owners for that path. `docs/images/**` with nothing after it means changes under that directory get no owner added, which is how you keep image churn from paging a content owner.
+
+Two limits come from the instance rather than the file. The CODEOWNERS file is capped at 500 KB and is not read at all above that size, and no more than 100 reviewers are ever added automatically regardless of how many rules match. Both caps are configurable through `code.owners.maximum.filesize` and `code.owners.maximum.users` in `shared/bitbucket.properties`, which makes them an admin decision on a self-managed instance rather than something a repository owner can change.
+
+From Bitbucket 9.0 a rule can point at a reviewer group and choose how many people get added, using strategies for all users, a random count, or a single random user. That is the difference between a rule that adds a whole team and one that adds whoever is available.
+
+## Bitbucket Cloud uses different syntax and a separate teams file
+
+Bitbucket Cloud uses the same `.bitbucket/CODEOWNERS` path but a different rule set. Per the [Cloud code owners guide](https://support.atlassian.com/bitbucket-cloud/docs/set-up-and-use-code-owners/), the syntax is `.gitignore`-like with three exclusions: escaping a leading `#` with a backslash, negating a pattern with `!`, and character ranges with `[ ]` are all unsupported.
+
+Precedence matches Data Center, last matching pattern wins. Owners can be an email address, a `@username`, or a `@workspace-slug/group-slug` reference.
+
+Cloud adds selection strategies that Data Center does not have in the same form. `all`, `random(n)` and `least_busy(n)` control how many people come out of a group, and `least_busy` sorts by the number of open pull requests each person is already reviewing. With no explicit strategy, Cloud picks a single user from the group at random, which is the same as `random(1)`. If your ownership rules point at a large group and you never specified a strategy, you are assigning reviewers by lottery.
+
+A `teams.yaml` file next to CODEOWNERS lets contributors define ad-hoc teams without workspace admin rights. Inline strategies in CODEOWNERS take precedence over the strategy set in `teams.yaml`, so one file can override the team default for a single path.
+
+## Azure Repos has no CODEOWNERS file, only a branch policy
+
+On Azure Repos, path-based routing lives in the [Automatically included reviewers policy](https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies?view=azure-devops#include-code-reviewers). In `az repos policy list` output it appears as Required reviewers with separate Is Blocking and Is Enabled flags, so the same policy can add a reviewer without blocking the merge, or block until that reviewer approves.
+
+The path filter has a sharp edge. A path filter that does not start with a slash or a wildcard is ignored, and the policy then applies to the whole repository. The failure is silent: the policy is enabled, reviewers get added, and nothing reports that the filter never took effect. If you are routing ownership for one service inside a monorepo, a missing leading slash turns it into a repo-wide policy.
+
+Azure Repos is also the only one of the three with no ownership file in the repository, so routing changes are not reviewed through a pull request. Whoever holds the policy permissions changes it in the portal, and the git history shows nothing.
+
+## How the three forges compare on reviewer routing
+
+| | GitLab | Bitbucket Data Center | Bitbucket Cloud | Azure Repos |
+|---|---|---|---|---|
+| Where ownership is defined | `CODEOWNERS` in the repo | `.bitbucket/CODEOWNERS` | `.bitbucket/CODEOWNERS` plus `teams.yaml` | Branch policy, no file |
+| Precedence | Last match per section; sections stack | Bottom to top, last rule wins | Last matching pattern wins | Not applicable |
+| Revision used | Target branch | Target branch | Target branch | Not applicable |
+| Effect | Owners added to the merge request | Suggested reviewers | Suggested reviewers | Required reviewers |
+| Blocks a merge on its own | Yes on protected branches | No | No | Yes, when Is Blocking is set |
+| Self-managed availability | Premium and Ultimate | Yes | Cloud only | Azure DevOps Server 2022.1+ for the per-iteration approval options |
+
+GitLab is the one forge where the ownership file itself can carry an approval requirement, and only on protected branches. On Bitbucket the block comes from a merge check, and on Azure Repos from the policy's blocking flag. Three different places to look when a merge is stuck.
+
+## Path-scoped rules for an AI reviewer are a different mechanism
+
+An AI reviewer needs two things CODEOWNERS does not provide: which rules apply to which paths, and whether its verdict carries weight. Both are configured in the review tool, not in the forge.
+
+[Kodus](https://docs.kodus.io/en/how_to_use/code_review/configs/directory_level), which runs self-hosted and reviews pull requests on GitLab, Azure DevOps and Bitbucket, scopes configuration by directory. You attach review settings to a folder at any depth, and Kody selects a single config per pull request: directory first, then repository, then global. Two properties of that model are worth planning around. Configured directories cannot overlap, so configuring `api/src/services` excludes `api/src/services/users`. And when a pull request touches two or more configured directories, the config escalates to the repository level, which means a change spanning two services gets the broader repository rules rather than a blend of both directory configs.
+
+The rule side is handled by [Kody Rules](https://docs.kodus.io/en/how_to_use/code_review/configs/kody_rules), which have a Per file execution mode that takes a glob path to limit a rule to specific files or directories, with inheritance flowing from Global to Repository to Directory. Blocking behaviour is [separate from scoping](https://docs.kodus.io/en/how_to_use/code_review/policy): suggestions are non-blocking by default, and request-changes and auto-approve are opt-in per repository.
+
+GitLab's lever is the exclusion file `.gitlab/duo/mr-review-automated-rules.yaml`, which [skips automatic reviews](https://docs.gitlab.com/user/gitlab_duo/code_review/) by target branch, source branch or author, and it is read from the default branch only. That last detail matters when you are testing, because a rule added on a feature branch does not apply to that feature branch. Custom review instructions are configured separately, and I have written about how a [self-managed GitLab instance can run an AI reviewer that follows the team's own rules](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/) without giving up file-level scoping.
+
+On Bitbucket Data Center there is no native AI review, so path scoping belongs to whichever third-party reviewer you wire in through a webhook or an OAuth consumer, and the mechanism is whatever that tool documents. The split between [what is native on Bitbucket Data Center and what is not](https://mergerequests.dev/blog/ai-code-review-on-bitbucket-data-center-whats-native-what-isnt/) is covered separately.
+
+## What this means when you wire an AI reviewer into the flow
+
+The useful model is that CODEOWNERS decides who reads the diff, and the review tool's own config decides what it looks for. They are stored in different places, changed through different processes, and on Azure Repos one of them is not a file at all.
+
+That has two consequences worth planning for. The ownership file is the only one of the two that goes through code review. On GitLab and Bitbucket it is committed, so a change to reviewer routing appears in a pull request like any other change. On Azure Repos the equivalent policy lives in the portal and leaves no trace in the repository history, so a routing change can happen without any review at all.
+
+The second is that neither mechanism gives you a gate by default. Code owners add people, and AI reviewers post comments. If you want the merge to stop, you need a merge check on Bitbucket, a branch policy on Azure Repos, or an approval rule on GitLab, and that configuration sits in a third place again. [Wiring an AI reviewer's status into Azure Repos branch policies](https://mergerequests.dev/blog/azure-repos-merge-gating-for-ai-reviewers-the-status-check-policy/) is where the status check policy turns into an actual gate, and it is worth reading before you assume a comment is a block.
+
+## FAQ
+
+**Does CODEOWNERS block a merge?**
+Not on its own. On GitLab a code owner section requires approval on protected branches. On Bitbucket, code owners are suggested reviewers, so the block comes from a merge check. On Azure Repos the equivalent policy has an explicit Is Blocking flag.
+
+**Do GitLab CODEOWNERS sections override each other?**
+No. Sections are evaluated separately and always enforced, and the last matching entry inside each section is used. Owners from several sections can apply to the same file.
+
+**Which branch does Bitbucket read CODEOWNERS from?**
+The target branch of the pull request, on both Bitbucket Data Center and Bitbucket Cloud.
+
+**Does Azure Repos support CODEOWNERS?**
+There is no CODEOWNERS file. Path-based routing is the Automatically included reviewers branch policy, which is off by default.
