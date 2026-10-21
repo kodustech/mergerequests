@@ -1,0 +1,94 @@
+---
+title: "Cutting pull request review time with AI: GitLab, Azure Repos, Bitbucket"
+description: "The documented levers that reduce pull request review time with AI on GitLab, Azure Repos and Bitbucket Data Center, cloud and self-managed (multi)"
+pubDate: 2026-10-21
+category: "guide"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+---
+
+Reducing review time with an AI reviewer is mostly not about the model. It is about six configuration decisions, and each of the three forges on this beat implements them differently. On GitLab both code review features run on GitLab.com, Self-Managed and Dedicated, but they are gated by different add-ons. On Azure Repos Copilot code review runs on Services only, in limited preview, and requires Azure Pipelines. Bitbucket Data Center has no native AI reviewer at all, so review time is set by merge checks and whatever bot you wire in through the REST API.
+
+The levers are the same everywhere. When the review starts, which files it reads, whether it runs on a draft, whether a finding actually blocks the merge, whether a new push triggers a new review, and how much effort each review is allowed to spend. Below is what each forge documents for those six, and where the defaults work against you.
+
+## The six levers that set review latency
+
+An AI reviewer adds a step to a workflow that already has a human bottleneck, so the useful question is whether it removes more waiting than it adds. That depends on these:
+
+- **Trigger**: on every push, on PR creation, or only when someone asks.
+- **Scope**: which files get reviewed and which are skipped, including how large diffs are handled.
+- **Draft behavior**: whether a review runs, or a gate silently disappears, before the PR is marked ready.
+- **Blocking**: whether a finding stops the merge or is only a comment.
+- **Re-review**: whether new commits get a fresh review and whether the bot remembers what it already said.
+- **Effort and cost**: how much the reviewer is allowed to think, and who pays for it.
+
+Those six are also where most "we turned on AI review and nothing got faster" reports come from. A review that runs but does not block anything is a comment feed. A gate that disappears on drafts is not a gate. A reviewer with no scoping reviews lock files and generated code forever.
+
+## GitLab: two review features, two add-on paths
+
+GitLab runs one of two code review features depending on your add-on and group settings. The non-agentic one is [GitLab Duo Code Review](https://docs.gitlab.com/user/gitlab_duo/code_review/), which requires the GitLab Duo Enterprise add-on and is Premium/Ultimate. The agentic one is [Code Review Flow](https://docs.gitlab.com/user/duo_agent_platform/flows/foundational_flows/code_review/), part of the GitLab Duo Agent Platform, available on Free, Premium and Ultimate and paid for with GitLab Credits.
+
+Which one runs is decided by the seat of the user who initiates the review. If that user holds a Duo Enterprise seat, GitLab runs the non-agentic feature by default, because it does not consume GitLab Credits. A group Owner can override that and route all reviews through Code Review Flow. Both features can run in the same project, which is worth knowing before you assume everyone on the team gets the same reviewer.
+
+The self-managed detail that decides whether any of this is usable: Code Review Flow runs as a CI/CD job and needs a runner with the `gitlab--duo` tag and an executor that supports Docker images, or GitLab hosted runners enabled for the project. On an air-gapped instance with no such runner, the flow has nowhere to execute. The non-agentic feature does not have that requirement, but it does depend on the AI Gateway request timeout, and reviews that do not finish in that window surface as a generic error.
+
+For triggering, automatic reviews are a project setting since 18.0. Group and instance level automatic reviews arrived in 18.4 behind the `cascading_auto_duo_code_review_settings` flag, which was removed in 18.7. GitLab skips draft merge requests, merge requests with no changes, and anything matching your exclusion rules. Code Review Flow also has a **Start a new review on push** option, and its follow-up reviews use earlier Duo threads and replies to judge the new changes.
+
+The blocking lever on GitLab is the weakest of the three. A user's request for changes blocks a merge on Premium and Ultimate, and a bot can bypass it. GitLab Duo approving or requesting changes is beta in 19.5 behind `duo_code_review_decisions`, disabled by default, and a Duo approval does not count toward required approvals. If you want an AI reviewer to hold a merge, the reliable path is a required external status check with **Status checks must succeed** turned on, which is a separate setting from the check itself.
+
+For teams on self-managed GitLab with their own rules, that combination is the one worth testing: a required status check for the gate, plus review instructions scoped to the project so the reviewer follows your standards instead of generic advice. I wrote about the add-on paths and rule scoping separately in [AI review on self-managed GitLab that follows your own rules](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/).
+
+On large merge requests, GitLab Duo Code Review sends the diffs plus the original contents of changed files, and if that request fails it retries without the file contents. The retry shrinks the prompt and also shrinks the context, so comments can be less specific. If the retry fails too, you get a generic error message. Splitting large merge requests and excluding irrelevant files is the documented mitigation. I covered the general problem in [what GitLab, Azure DevOps and Bitbucket hide in large PRs](https://mergerequests.dev/blog/what-gitlab-azure-devops-and-bitbucket-hide-in-large-prs/).
+
+## Azure Repos: Copilot code review is Services-only and preview-gated
+
+[GitHub Copilot code review for Azure Repos](https://learn.microsoft.com/en-us/azure/devops/repos/git/copilot-code-reviews) is in limited preview and applies to Azure DevOps Services. A Project Collection Administrator enables it for the organization, a Project Administrator manages project defaults, and a repository owner turns it on per repository. Individual users also opt in through Preview features unless an administrator enables it for everyone.
+
+Two constraints change the plan more than anything else in that page. Copilot code review requires Azure Pipelines, and self-hosted agent pools and Managed DevOps Pools are not supported. For a team whose pipelines run entirely on self-hosted agents, the feature is not a smaller version of itself, it is unavailable. The second is that automatic review is not part of enablement. It is a separate branch policy, **Automatically request Copilot code review**, that you set per target branch. Enabling the feature makes it available; the policy is what makes it run without a manual request.
+
+Effort is a per-project default that repository admins can override when the project allows it, and higher effort consumes more tokens and costs more. That is a reasonable place to start a review-time experiment: leave the default low on most repositories, raise it where the diffs are riskier, and compare against what the pipeline costs you in wall-clock time.
+
+The draft-PR behavior on Azure Repos deserves its own look because it affects every gate, not just the AI one. A draft pull request suppresses build validation policies so they do not run automatically, disables voting, and does not auto-add required reviewers. Publishing the PR assigns reviewers and evaluates policies. Marking a published PR as a draft removes all existing votes. So a PR that sits in draft while someone iterates looks unblocked, and any gate you wired to build validation or a required reviewer is simply absent until the PR is published.
+
+Once a PR is published, Azure Repos gives you a policy model with a real blocking lever: a status check policy that a bot can post to, plus the minimum reviewer and build validation policies. If you are wiring an AI reviewer into that model, [the status check policy is the piece that actually gates the merge](https://mergerequests.dev/blog/azure-repos-merge-gating-for-ai-reviewers-the-status-check-policy/), and the build expiration setting (Immediately, After n hours, or Never) decides how stale a passing build is allowed to get before it stops counting.
+
+For Azure DevOps Server, none of the above applies. Copilot code review is a Services feature, so a Server team looking to cut review time is choosing between third-party tools and their own pipeline job.
+
+## Bitbucket Data Center: the gate and the finding are the same object
+
+Bitbucket Data Center has no native AI reviewer, so the review-time question becomes which merge checks you enforce and what you post into Code Insights. [Merge checks](https://confluence.atlassian.com/bitbucketserver096/checks-for-merging-pull-requests-1627097061.html) are set at Project settings > Merge checks and inherited by repositories, with repository admins able to override unless a project admin has restricted repository-level customization (available from Bitbucket 8.10, and restricting it deletes any saved repository-level settings for that check). Minimum approvals and default reviewers are separate checks and both must be met.
+
+The Code Insights merge check is where an AI reviewer gets to block a merge, and its scope is narrow in a way that matters. Annotations only block merging if they are on the diff. An annotation placed on a changed file outside the changed lines, or on a file that did not change, will not block anything. So the same finding can gate the merge or be invisible to the gate depending on where the line anchor lands. This is the opposite of Azure Repos and GitLab, where the finding surface and the gate are two different objects that you connect.
+
+The other Code Insights constraints are operational. Annotations display only on lines changed in the unified diff, so they are absent in side-by-side, commit, and iterative diff views. A rerun must delete the previous annotations first, because there is no de-duplication, and posting more than 1,000 annotations rejects the whole request. A reviewer that re-posts the same findings on every push will eventually hit one of those limits rather than a merge check.
+
+Bitbucket Data Center is also the one forge of the three that lets you ask for the delta. Its changes resource accepts `changeScope=UNREVIEWED`, which uses a per-user last reviewed commit, so a reviewer can fetch only what changed since that user last looked. Azure Repos tracks something similar through `changeTrackingId` and `firstComparingIteration`, and GitLab does not have a cross-version diff API, so the delta there comes from the repository compare endpoint.
+
+## What third-party reviewers document for these forges
+
+If you want a native reviewer on Bitbucket Data Center, or a self-hosted one on Azure DevOps Server, the options are third-party tools, and their docs are the only honest source for what they support.
+
+**CodeRabbit** documents [self-hosted deployment](https://docs.coderabbit.ai/self-hosted/overview) as Enterprise-only, for customers with 500 or more user seats, running the review agent as a container inside your infrastructure with a bring-your-own-model setup. The supported platforms listed are GitHub Enterprise Server, GitLab self-managed, Azure DevOps and Bitbucket Data Center. Deployment and configuration instructions are provided during onboarding rather than published. For scope, it uses [path filters and path instructions](https://docs.coderabbit.ai/guides/review-instructions), where exclusions win over includes regardless of order, and there is an Azure DevOps-specific caveat: repository inventory and diff hydration apply the default ignored paths directly rather than through your configured filters, so an override does not take effect on those two paths.
+
+**Qodo** documents an [on-premises deployment](https://docs.qodo.ai/on-prem) on Kubernetes, with integrations for GitLab Server, Bitbucket Data Center, Azure DevOps and Gerrit. Cloud-hosted Git instances use a separate install path.
+
+**Kodus** is open source and [self-hostable](https://github.com/kodustech/kodus-ai) with your own model keys, running on Docker on a VM you control (2 CPU cores, 8 GB RAM, 60 GB disk minimum) or as a hosted service. It reviews pull requests on GitLab, Bitbucket, Azure DevOps and GitHub, including self-managed GitLab, and its Kody Rules are written in plain language and scoped to an organization, repository, path or review scope, which is the lever that maps to the scope row in the table below. The CLI can review a working tree, staged diff, branch or commit, so a pre-push review does not need a pull request to exist. The trade-off sits in the plan split: the Community tier caps Kody Rules at 10 and active plugins at 3, so teams that want many scoped rule sets or integrations are choosing between paying and trimming the ruleset.
+
+| | GitLab | Azure Repos | Bitbucket Data Center |
+|---|---|---|---|
+| Native AI reviewer | Duo Code Review (Duo Enterprise add-on) or Code Review Flow (GitLab Credits) | Copilot code review, limited preview | None |
+| Edition scope | GitLab.com, Self-Managed, Dedicated | Services only | n/a |
+| Automatic review | Project setting since 18.0; group/instance 18.4+ | Separate branch policy per target branch | n/a |
+| Self-hosted execution | Code Review Flow needs a runner with the `gitlab--duo` tag | Requires Azure Pipelines; self-hosted agent pools not supported | n/a |
+| Draft PR behavior | Skipped by automatic reviews | Suppresses build validation, disables voting, no auto reviewers | n/a |
+| Blocking a merge | Request changes (Premium/Ultimate, bypassable); Duo decisions beta in 19.5 | Status check policy, build validation, minimum reviewers | Merge checks; Code Insights blocks only on-diff annotations |
+| Re-review on push | "Start a new review on push"; follow-up reviews reuse earlier threads | New policy evaluation per push | `changeScope=UNREVIEWED` via last reviewed commit |
+| Effort or cost control | Model selection per feature; GitLab Credits | Default effort level per project/repo | n/a |
+
+## What this means when you are picking levers
+
+Two of these three forges let you build a real gate for an AI reviewer, and one makes it awkward. On Azure Repos the status check policy is a first-class blocking object and the draft-PR behavior is the thing most likely to surprise you, because a gate you configured can be absent without any error. On GitLab the gate exists but the AI reviewer's own approval does not count toward required approvals, so the check that holds the merge is the status check, not the bot's verdict. On Bitbucket Data Center the finding and the gate are the same object, which is simpler to reason about and much more sensitive to where a line anchor lands.
+
+If you are on Bitbucket Data Center or Azure DevOps Server, no native option is on the table, and the honest comparison is between CodeRabbit's Enterprise-only self-hosted path, Qodo's Kubernetes deployment, and Kodus's open-source self-hosting with your own keys. Those are different shapes of commitment: a seat threshold, a Kubernetes platform, or a VM and a ruleset budget. Which one fits depends less on review quality than on what your team already runs and how much of the configuration you are willing to own.
+
+For the effort lever, the default should be the cheap end. Raise review effort on the repositories where diffs are riskier, and measure the change in review latency and cost rather than assuming a heavier review is a better one. A reviewer that runs on every push at the highest effort level and posts findings nobody can merge-block with is just a slower comment feed.
