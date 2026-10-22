@@ -2,16 +2,26 @@
 title: "Self-hosted AI code review: CodeRabbit and Qodo, per their docs"
 description: "Guide to self-hosted AI code review for GitLab, Azure DevOps, Bitbucket: what CodeRabbit and Qodo actually document for on-prem (multi)"
 pubDate: 2026-09-16
+updatedDate: 2026-10-22
 category: "guide"
 platform: "multi"
 tags: []
+faq:
+  - q: "What plan does CodeRabbit require for self-hosted deployment?"
+    a: "Enterprise only, and only for customers with 500 or more user seats. CodeRabbit runs the review agent inside your own infrastructure as a container, with deployment and configuration instructions given to customers during onboarding rather than published openly."
+  - q: "Which Git platforms does CodeRabbit's self-hosted edition support?"
+    a: "GitHub Enterprise Server, GitLab self-managed, Azure DevOps, and Bitbucket Data Center, per CodeRabbit's self-hosted overview."
+  - q: "How does Qodo deploy on-premises, and which Git platforms does it cover?"
+    a: "Qodo deploys on Kubernetes inside your own infrastructure. As of a 2026-10-22 check, its listed integrations are GitHub, GitLab Cloud, GitLab Server, Bitbucket Data Center, Azure DevOps, and Gerrit — Bitbucket Data Center is now the only Bitbucket option, since the earlier standalone Bitbucket Cloud install page is gone."
+  - q: "Are the self-hosted install instructions for either vendor publicly available?"
+    a: "No. CodeRabbit gives deployment instructions to customers during onboarding, and Qodo's architecture and Helm chart pages sit behind an Enterprise engagement. Neither publishes an open install guide, which is an absence of public documentation, not an absence of the feature."
 ---
 
-Most "best self-hosted AI code review tool" lists repeat each other's claims, and none of them say which edition they looked at or when. This page records what two vendors actually document for on-prem deployment, read directly from their own docs on 2026-09-14.
+Most "best self-hosted AI code review tool" lists repeat each other's claims, and none of them say which edition they looked at or when. This page records what two vendors actually document for on-prem deployment, read directly from their own docs on 2026-09-14 and re-verified 2026-10-22.
 
 ## CodeRabbit self-hosted
 
-Read on [CodeRabbit's self-hosted overview](https://docs.coderabbit.ai/self-hosted/overview), 2026-09-14. Enterprise plan only, for customers with 500 or more user seats. CodeRabbit runs the review agent inside your infrastructure as a container image, on a server, a container platform, or a serverless workload.
+Read on [CodeRabbit's self-hosted overview](https://docs.coderabbit.ai/self-hosted/overview), 2026-09-14, re-verified 2026-10-22, unchanged. Enterprise plan only, for customers with 500 or more user seats. CodeRabbit runs the review agent inside your infrastructure as a container image, on a server, a container platform, or a serverless workload.
 
 Supported platforms per the docs: GitHub Enterprise Server, GitLab self-managed, Azure DevOps, and Bitbucket Data Center.
 
@@ -19,7 +29,7 @@ Code and pull request data stay inside your environment; the review prompts and 
 
 ## Qodo on-premises
 
-Read on [Qodo's on-premises page](https://docs.qodo.ai/on-prem), 2026-09-14. Qodo deploys the platform on Kubernetes in your own infrastructure. Git integrations cover GitHub App, GitLab App, Bitbucket Cloud App, Bitbucket Data Center, Azure DevOps App, and Gerrit. Qodo keeps a separate install path for cloud-hosted Git instances.
+Read on [Qodo's on-premises page](https://docs.qodo.ai/on-prem), 2026-09-14, re-verified 2026-10-22. Qodo deploys the platform on Kubernetes in your own infrastructure. Git integrations cover GitHub, GitLab Cloud, GitLab Server, Bitbucket Data Center, Azure DevOps, and Gerrit — the GitLab entry has since split into separate Cloud and Server install pages, and the standalone Bitbucket Cloud install page is gone, leaving Bitbucket Data Center as the only Bitbucket integration listed. Qodo keeps a separate install path for cloud-hosted Git instances.
 
 ## What matters for this beat
 

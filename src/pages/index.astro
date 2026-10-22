@@ -4,7 +4,21 @@ import { getPublishedPosts, formatDate } from '../lib/blog';
 import { site } from '../site.config';
 
 const posts = await getPublishedPosts();
-const railFor = (key: string) => posts.filter((p) => p.data.platform === key).slice(0, 5);
+
+/**
+ * A few "multi" posts are relevant to specific platform rails but get buried
+ * under platform: "multi" alone, since each rail only shows its newest 5 and
+ * newer multi posts keep pushing them out. Cross-list them here so human
+ * visitors can find them the way llms.txt and the sitemap already do.
+ */
+const EXTRA_RAIL_SLUGS: Record<string, string[]> = {
+	'self-hosted-ai-code-review-coderabbit-and-qodo-per-their-docs': ['gitlab', 'bitbucket'],
+	'pr-agent-on-gitlab-azure-devops-bitbucket-the-self-hosted-code-review-option': ['gitlab', 'azure-devops', 'bitbucket'],
+};
+
+const railFor = (key: string) => posts
+	.filter((p) => p.data.platform === key || EXTRA_RAIL_SLUGS[p.id]?.includes(key))
+	.slice(0, 5);
 
 const title = "Tooling for GitLab, Azure DevOps and Bitbucket | mergerequests.dev";
 ---

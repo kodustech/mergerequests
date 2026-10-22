@@ -2,12 +2,22 @@
 title: "AI code review on Bitbucket Data Center: what's native, what isn't"
 description: "Bitbucket's native AI review (Rovo) is Cloud-only. On Bitbucket Data Center there is no documented native AI code review; here's what you can wire up."
 pubDate: 2026-09-17
+updatedDate: 2026-10-22
 category: "guide"
 platform: "bitbucket"
 tags: ["bitbucket", "datacenter", "rovo", "aicodereview"]
+faq:
+  - q: "Is there native AI code review on Bitbucket Data Center?"
+    a: "No. Atlassian's Bitbucket AI page scopes Rovo and AI-assisted code review to Standard, Premium, or Enterprise Cloud plans, and the Bitbucket Server/Data Center documentation has no matching page for AI-assisted code review."
+  - q: "What is the Bitbucket Hybrid License, and does it bring Rovo to Data Center?"
+    a: "It's a licensing and migration path, announced on Atlassian's Bitbucket blog in December 2025, that lets Data Center customers also use Bitbucket Cloud capabilities, including AI-assisted review, under one license. It does not make Rovo run against a self-hosted Data Center instance; the review still executes in Bitbucket Cloud."
+  - q: "Is there an open request to bring Rovo to Bitbucket Data Center directly?"
+    a: "Yes. Atlassian's own feature request AI-1172, 'Rovo integration with Bitbucket Data Center,' is still in the Reviewing state with an Unresolved resolution, so it has no confirmed timeline."
+  - q: "How do Data Center teams gate merges without a native AI reviewer?"
+    a: "Through branch permissions, usually combined with required builds and the pre-receive hooks Bitbucket Data Center ships (installed but disabled by default, enabled per project or repo). The merge gate is whatever branch permissions and required checks you configure, not anything the AI vendor provides."
 ---
 
-A self-hosted Bitbucket team asking "what AI code review can I run on our own server" gets a short answer: per the vendor's current docs, nothing native. This page is what the docs actually say, checked 2026-09-17.
+A self-hosted Bitbucket team asking "what AI code review can I run on our own server" gets a short answer: per the vendor's current docs, nothing native today, though Atlassian has announced a licensing path that changes that. This page is what the docs actually say, checked 2026-09-17 and re-verified 2026-10-22.
 
 ## Native AI review is a Cloud feature
 
@@ -19,11 +29,17 @@ The scope is Cloud. The page's FAQ states: "Rovo will be available to customers 
 
 ## What the Data Center docs do not say
 
-A site search of the Bitbucket Server (Data Center) documentation, confluence.atlassian.com/bitbucketserver, for "AI-assisted code review" returns no matching documents (checked 2026-09-17). There is no documented native AI code review for the self-managed edition. Per my method: absence of documentation is absence of documentation, not confirmation the feature is absent. But given Atlassian ships the Cloud feature under a Cloud-only plan scope and publishes nothing for Data Center, the practical reading is that self-managed teams handle AI review themselves.
+A site search of the Bitbucket Server (Data Center) documentation, confluence.atlassian.com/bitbucketserver, for "AI-assisted code review" returns no matching documents (checked 2026-09-17, re-checked 2026-10-22, unchanged). There is no documented native AI code review for the self-managed edition. Per my method: absence of documentation is absence of documentation, not confirmation the feature is absent. But given Atlassian ships the Cloud feature under a Cloud-only plan scope and publishes nothing for Data Center, the practical reading is that self-managed teams handle AI review themselves.
+
+A direct ask for that gap is already on Atlassian's own backlog: [AI-1172, "Rovo integration with Bitbucket Data Center,"](https://jira.atlassian.com/browse/AI-1172) requests exactly this, and as of 2026-10-22 its status is "Reviewing" with an "Unresolved" resolution — a request for a feature that doesn't exist yet, still unscheduled.
 
 ## The third-party path
 
 Because the vendor does not document a native reviewer for Data Center, any AI review there is a third-party integration. The two supported hook points are pull-request triggers and build pipelines. Bitbucket Data Center exposes repository hooks and branch permissions (confluence.atlassian.com/bitbucketserver/using-repository-hooks, read 2026-09-17). It also ships pre-receive hooks, installed but disabled, that admins enable per project or per repo. Those are the seams a third-party reviewer wires into.
+
+## A licensing path is coming, but it isn't a Data Center feature
+
+Atlassian's [Bitbucket year-in-review post](https://www.atlassian.com/blog/bitbucket/the-2025-year-in-review-and-whats-coming-soon) (2025-12-17) announces a Bitbucket Hybrid License for "those with continued self-hosted needs," described as a way to keep running Bitbucket Data Center while unlocking "Bitbucket Cloud's latest AI and CI/CD capabilities... under one license." Read carefully, that is a licensing and migration mechanism, not a Data Center product update: the AI-assisted review still runs in Bitbucket Cloud, and the Hybrid License is what lets a Data Center customer's agreement also cover using it there. It does not make Rovo run against a self-hosted Data Center instance. Data Center itself remains on a fixed horizon too — Atlassian's migration guidance lists Data Center end-of-life as 2029-03-28, after which Bitbucket Data Center is sold only through the Hybrid License.
 
 ## The binding gate is still yours
 
@@ -31,4 +47,4 @@ The merge gate on Data Center is branch permissions (Project or Repository setti
 
 ## Bottom line
 
-If your team is on Bitbucket Cloud, native AI-assisted code review exists in Rovo and is already rolled out on Standard, Premium, and Enterprise. If your team is on Data Center, the vendor documents no native option as of 2026-09-17, so the plan is a third-party reviewer behind a merge gate you configure. Those are two different questions and the docs only answer the first.
+If your team is on Bitbucket Cloud, native AI-assisted code review exists in Rovo and is already rolled out on Standard, Premium, and Enterprise. If your team is on Data Center, the vendor documents no native option as of 2026-10-22, and the one announced path to Rovo review — the Bitbucket Hybrid License — is a licensing bridge into Cloud, not a Data Center feature, with no shipping date confirmed on Atlassian's own pages. Until that changes, the plan on Data Center is a third-party reviewer behind a merge gate you configure. Those are two different questions and the docs only answer the first.

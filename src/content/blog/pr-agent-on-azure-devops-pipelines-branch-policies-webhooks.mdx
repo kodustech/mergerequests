@@ -5,19 +5,38 @@ pubDate: 2026-09-15
 category: "guide"
 platform: "azure-devops"
 tags: []
+faq:
+  - q: "Why doesn't a YAML pr: trigger run PR-Agent on Azure Repos?"
+    a: "Azure Repos Git does not honor YAML pr: triggers at all. The official pipeline template tells you to drop the pr: block and configure Build Validation as a Branch Policy on the target branch instead."
+  - q: "Can PR-Agent respond to /review or /improve typed in a pull request comment on Azure DevOps?"
+    a: "Not from the pipeline route alone, because Azure Pipelines cannot trigger workflows from PR comments. The documented path for comment events is a manual Azure Service Hook — Pull request created for a review, Pull request commented on for a slash command — and it requires API v2.0."
+  - q: "Should I authenticate PR-Agent with a PAT or DefaultAzureCredential?"
+    a: "A PAT is faster to set up but expires and runs API calls under the user identity. DefaultAzureCredential uses managed identity or a service principal, which the docs describe as more secure, and it creates a separate ADO identity via AAD for the agent."
+  - q: "Why doesn't the agent respond when I comment 'hi agent' on a pull request?"
+    a: "It discovers its own identity from its earlier comments on that PR, not from a generic phrase. If it hasn't posted yet, or the ADO identity has changed, configure a stable identity explicitly in the [azure_devops_server] section."
 ---
 
 PR-Agent on Azure DevOps: pipelines, Branch Policies, webhooks.
 
 Read the vendor's own page for this before planning a rollout: the Azure ADO/Server integration docs now live at installation/azure.md in the pr-agent repo. Most of what shows up in listicles about "PR-Agent supports Azure DevOps" stops at "it supports Azure DevOps". The documented reality has four moving parts, and three of them bite teams that assume GitHub habits carry over.
 
-**Triggering. Azure Repos Git does not honor YAML `pr:` triggers.** The official pipeline template notes this explicitly and tells you to drop the `pr:` block and configure Build Validation as a Branch Policy on the target branch instead. This is the single most common setup mistake I see. On GitHub and Bitbucket Cloud the YAML trigger works; on Azure Repos it silently does nothing until you add the Build Validation policy in Project Settings, Repositories, Branches.
+## Triggering: Azure Repos ignores YAML `pr:` triggers
 
-**Pipeline vs webhook.** The pipeline route runs the pre-built `pragent/pr-agent:latest` image in `azure-pipelines.yml` and executes `describe`, `review`, and `improve` on each merged-but-pending PR. The docs note directly that Azure Pipelines lacks support for triggering workflows from PR comments, so a pure pipeline setup cannot answer slash commands. If you want comment events, the documented path is a manual Azure service hook: "Pull request created" for a review, or "Pull request commented on" for a supported `/` command, and API v2.0 is required for comment events.
+Azure Repos Git does not honor YAML `pr:` triggers. The official pipeline template notes this explicitly and tells you to drop the `pr:` block and configure Build Validation as a Branch Policy on the target branch instead. This is the single most common setup mistake I see. On GitHub and Bitbucket Cloud the YAML trigger works; on Azure Repos it silently does nothing until you add the Build Validation policy in Project Settings, Repositories, Branches.
 
-**Auth is a real fork.** The provider accepts a PAT or DefaultAzureCredential. PAT is faster to create and expires, and API calls run under the user identity. DefaultAzureCredential uses managed identity or a service principal, which the docs describe as more secure and it creates a separate ADO identity via AAD for the agent. Secrets go in `.secrets.toml`, and the `org` value must be set there regardless of which auth route you pick.
+## Pipeline vs. webhook
 
-**Identity for comments.** The agent answers from the thread once it has posted, but it discovers its own identity from its earlier comments. A generic phrase like `hi agent` does not trigger a response. If the agent has not spoken on the PR yet, or the ADO identity has changed, you configure a stable identity explicitly in the `[azure_devops_server]` section.
+The pipeline route runs the pre-built `pragent/pr-agent:latest` image in `azure-pipelines.yml` and executes `describe`, `review`, and `improve` on each merged-but-pending PR. The docs note directly that Azure Pipelines lacks support for triggering workflows from PR comments, so a pure pipeline setup cannot answer slash commands. If you want comment events, the documented path is a manual Azure service hook: "Pull request created" for a review, or "Pull request commented on" for a supported `/` command, and API v2.0 is required for comment events.
+
+## Auth: PAT vs. DefaultAzureCredential
+
+The provider accepts a PAT or DefaultAzureCredential. PAT is faster to create and expires, and API calls run under the user identity. DefaultAzureCredential uses managed identity or a service principal, which the docs describe as more secure and it creates a separate ADO identity via AAD for the agent. Secrets go in `.secrets.toml`, and the `org` value must be set there regardless of which auth route you pick.
+
+## Identity: how the agent recognizes itself in comments
+
+The agent answers from the thread once it has posted, but it discovers its own identity from its earlier comments. A generic phrase like `hi agent` does not trigger a response. If the agent has not spoken on the PR yet, or the ADO identity has changed, you configure a stable identity explicitly in the `[azure_devops_server]` section.
+
+## What the docs don't confirm
 
 A few facts I checked but could not confirm from this page: cost-per-PR figures, and whether the webhook route works against Azure DevOps Server behind air-gap. For those, the docs point to the general configuration reference and to the issue tracker for comment-trigger support; I am not rounding numbers the vendor page does not state.
 

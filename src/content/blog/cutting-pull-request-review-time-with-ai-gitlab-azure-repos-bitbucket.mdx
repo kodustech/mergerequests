@@ -5,6 +5,17 @@ pubDate: 2026-10-21
 category: "guide"
 platform: "multi"
 tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+faq:
+  - q: "What are the six levers that actually determine AI code review latency?"
+    a: "Trigger (when the review starts), scope (which files it reads), draft behavior (whether it runs before a PR is marked ready), blocking (whether a finding stops the merge), re-review (whether a new push gets a fresh pass), and effort or cost (how much the reviewer is allowed to spend)."
+  - q: "Does a GitLab Duo Code Review approval count toward required approvals?"
+    a: "No. A Duo approval or request-changes decision does not count toward required approvals, and the feature is still beta behind a flag in 19.5. The reliable way to block a merge is a required external status check with Status checks must succeed turned on."
+  - q: "Does Copilot code review work on Azure Pipelines self-hosted agent pools?"
+    a: "No. Self-hosted agent pools and Managed DevOps Pools are explicitly not supported, so a team running entirely on self-hosted agents cannot use the feature at all, not even a reduced version of it."
+  - q: "On Bitbucket Data Center, does every AI finding block the merge?"
+    a: "No. A Code Insights annotation only blocks the merge check if it lands on a changed line within the diff. The same finding placed on an unchanged file, or on a changed file outside the changed lines, will not block anything."
+  - q: "Does marking an Azure Repos pull request as a draft remove its gates?"
+    a: "Yes. A draft PR suppresses build validation policies, disables voting, and skips auto-adding required reviewers, so any gate wired to those mechanisms is simply absent until the PR is published and policies are evaluated again."
 ---
 
 Reducing review time with an AI reviewer is mostly not about the model. It is about six configuration decisions, and each of the three forges on this beat implements them differently. On GitLab both code review features run on GitLab.com, Self-Managed and Dedicated, but they are gated by different add-ons. On Azure Repos Copilot code review runs on Services only, in limited preview, and requires Azure Pipelines. Bitbucket Data Center has no native AI reviewer at all, so review time is set by merge checks and whatever bot you wire in through the REST API.
