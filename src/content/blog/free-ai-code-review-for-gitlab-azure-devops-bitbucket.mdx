@@ -5,6 +5,15 @@ pubDate: 2026-10-06
 category: "guide"
 platform: "multi"
 tags: []
+faq:
+  - q: "Does CodeRabbit have a free plan for self-managed teams?"
+    a: "No. CodeRabbit's current pricing page lists only paid tiers — Essentials, Team, Advanced, and a custom Enterprise plan — each with a 14-day trial, and self-hosting is listed as an Enterprise-only feature."
+  - q: "What's the catch with Kodus Community's free tier?"
+    a: "It caps Kody Rules at 10 and plugins at 3, and an unlicensed self-hosted instance evaluates at most 10 rules per review, oldest first, so a larger rule library silently stops firing rules past that point."
+  - q: "Can Open Code Review post review comments directly on a pull request?"
+    a: "Not by itself. It operates on a git diff through a CLI rather than a forge API, so it doesn't integrate with a pull request's comment thread on its own; wiring that up is extra work on your side."
+  - q: "Which free self-hosted tool behaves like a native bot in merge requests versus a CLI pass?"
+    a: "PR-Agent behaves like a native bot, since it has per-provider webhook and comment integrations across GitHub, GitLab, Bitbucket, Azure DevOps, and Gitea. Open Code Review runs as a CLI pass over a diff or whole files, with no comment commands or PR descriptions at all."
 ---
 
 Most free AI code review options assume the code lives on GitHub. On GitLab Self-Managed, Azure DevOps Server or Bitbucket Data Center, the realistic choices are an open-source reviewer you host yourself and pay only for the model calls, or a hosted tool's trial. The free-for-open-source programs that dominate "free code review tools" lists are gated on GitHub and on the repository being public there, which describes very few of the teams still running a self-managed forge.

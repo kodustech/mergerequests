@@ -5,6 +5,15 @@ pubDate: 2026-09-29
 category: "reference"
 platform: "gitlab"
 tags: ["gitlab", "selfmanaged", "codereview", "ai"]
+faq:
+  - q: "Which GitLab AI reviewer runs on a given merge request?"
+    a: "It depends on the seat of the user who initiates the review. A GitLab Duo Enterprise seat holder gets the non-agentic GitLab Duo Code Review by default; everyone else gets the agentic Code Review Flow, unless a group Owner overrides the default so Code Review Flow runs for everyone."
+  - q: "Does GitLab Duo Code Review see the whole repository, or just the diff?"
+    a: "Just the merge request and its file diffs, in a single pass. Code Review Flow is the one with context awareness of repository structure and cross-file dependencies, which matters for any rule that spans more than one file."
+  - q: "Does GitLab learn a team's conventions from review feedback over time?"
+    a: "No. GitLab documents that feedback given in review threads does not influence later reviews of other merge requests; that behavior is tracked only as a proposed issue (560116), not something either feature does today."
+  - q: "How do I tell which of the two reviewers actually ran on a merge request?"
+    a: "Check the merge request's activity feed. Code Review Flow opens a review session, which also shows up in the project's sessions list; if there's no session, GitLab Duo Code Review handled it."
 ---
 
 GitLab Self-Managed now runs two different AI code review features, and which one fires depends on who opens the merge request. That split is the part that matters if the reason you want AI review is enforcement of your team's own standards, because the two features are not equally equipped to carry those standards, and the one that runs is not up to you unless you configure it.

@@ -5,6 +5,15 @@ pubDate: 2026-10-16
 category: "reference"
 platform: "multi"
 tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+faq:
+  - q: "What's the difference between a forge's diff-rendering cap and a reviewer's file cap?"
+    a: "The forge cap degrades the view: past it you get a partial diff with a warning, but a human can still dig in. The reviewer's own cap skips the pull request entirely, which produces zero comments with no visible reason, a much quieter failure."
+  - q: "Can I raise GitLab's diff limits on GitLab.com?"
+    a: "No. GitLab.com's diff limits cannot be configured. Only GitLab Self-Managed and GitLab Dedicated can raise the defaults, up to a 500 KB patch size, 3,000 changed files, and 100,000 changed lines."
+  - q: "What file-count limit does Kodus document before it skips a pull request?"
+    a: "2,000 reviewable files after ignored-file patterns are applied, so lock files and similar excluded paths don't count toward the cap. Past that limit it posts a 👀 status instead of a review, which arrives as a comment rather than a reaction on Azure DevOps and Bitbucket, since neither has a reaction API."
+  - q: "Does raising a forge's diff limit fix a reviewer that skips large pull requests?"
+    a: "No. The two caps live in separate products. Raising the forge's rendering limit only lets a bigger diff display; it does nothing to a reviewer's own file-count ceiling, which still skips the same pull request."
 ---
 
 A large pull request runs into two different limits, and they fail in different ways. The forge decides how much of the diff it will render, and past that point you get a partial view with a warning on the screen. The reviewer decides how many files it will analyze, and past that point you get no review at all. Raise the first number and leave the second alone, and you still end up with a pull request that nobody, human or automated, actually looked at.
