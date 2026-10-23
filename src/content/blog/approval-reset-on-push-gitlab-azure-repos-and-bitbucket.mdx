@@ -1,0 +1,120 @@
+---
+title: "Approval reset on push: GitLab, Azure Repos and Bitbucket"
+description: "multi: how GitLab, Azure Repos, Bitbucket Cloud and Bitbucket Data Center treat existing approvals when a new commit lands, and what an AI reviewer has to redo afterwards."
+pubDate: 2026-10-23
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+faq:
+  - q: "Does a rebase reset approvals on GitLab?"
+    a: "Not necessarily. GitLab compares the new git patch-id against the previous one, so a rebase that produces the same diff keeps existing approvals even though the commits were rewritten."
+  - q: "Can an AI reviewer's approval satisfy a required-approval rule on Bitbucket Cloud?"
+    a: "Not if it posts as the pull request author. The author can approve, but that approval does not count toward the minimum number of approvals for the merge check."
+  - q: "Does Azure DevOps Server have the every-iteration approval option?"
+    a: "The branch policies documentation places Require at least one approval on every iteration at Azure DevOps Server 2022.1 and higher. Older Server installations get the last-iteration option and the two vote-reset options instead."
+---
+
+A new commit on the source branch can throw away every approval a merge request has already collected, and the three forges decide that in different places with different defaults. GitLab removes approvals by default and compares diffs by patch id, so a rebase that produces the same change keeps them. Azure Repos exposes the reset as options on one branch policy, and one of those options carries a Server 2022.1 floor. Bitbucket Cloud puts the useful setting behind Premium, and Bitbucket Data Center ships no check for it at all.
+
+For a team running an AI reviewer, the consequence is concrete. The bot approves, someone pushes a follow-up fix, and the approval is gone. Whether the bot runs again, whether a human has to re-approve, and whether anyone gets told are all decided by settings that usually sit at their defaults.
+
+## Why a push invalidates an approval at all
+
+An approval is recorded against a version of the change, so the forge has to decide whether the new commit is the same change or a different one. That decision is the entire mechanism, and it explains why some pushes reset approvals while others leave them alone.
+
+GitLab makes that decision with `git patch-id`, which produces a reasonably stable identifier for a diff. When you push, the new `patch-id` is compared with the previous one, and the reset only happens if the diff actually changed. This is why `git rebase` or merging the target branch into your feature branch does not necessarily cost you approvals on GitLab, even though both rewrite commits.
+
+Azure Repos works in iterations of the source branch rather than diff identity, and the number of approvals counted is tied to which iteration they were cast on. Bitbucket compares the pull request diff, which is why its Premium option is worded as "keep approvals if there is no change to the diff" rather than anything about commits.
+
+That difference matters when you pick a review workflow, because a squash-and-force-push habit lands very differently on each of the three. It also matters for the [limits that decide how much of a large pull request anyone actually reads](https://mergerequests.dev/blog/what-gitlab-azure-devops-and-bitbucket-hide-in-large-prs/), since a truncated diff and a reset approval can both hide the same problem.
+
+## GitLab removes approvals by default, and the diff comparison is what saves you
+
+Merge request approval settings are Premium and Ultimate on GitLab.com, GitLab Self-Managed and GitLab Dedicated. The [approval settings page](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/user/project/merge_requests/approvals/settings.md) states the default plainly: an approval on a merge request is removed when you add more changes after the approval. Teams often assume they opted into that behavior. They did not.
+
+Three options exist under the Code Owner approval removals heading, and they are not interchangeable:
+
+- Keep approvals, which removes nothing.
+- Remove all approvals, which is the default.
+- Remove approvals by Code Owners if their files changed, which keeps general approvals but drops a Code Owner's approval when a later commit touches files they own.
+
+The third option is the one worth knowing about if your review rules depend on Code Owners. A general approval survives a push, a Code Owner approval does not, and the merge request can sit in a state where it has the required number of approvals but not the required approvals from the required people. The [reviewer routing rules that decide who those Code Owners are](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/) are configured separately, which is another reason the two settings get out of sync on large projects.
+
+Reset behavior is set per project, and a top-level group can cascade it down. The instance-level equivalent is narrower than people expect. On Self-Managed, an administrator can lock three things from Admin, then Push rules, then Merge request approvals: preventing the author from approving, preventing users who added commits from approving, and preventing approval rules from being edited. The reset-on-push behavior itself is not on that list, so an instance-wide lock does not exist for it.
+
+Two API details matter if a bot is doing the approving. GitLab records the approved version when you send the `sha` attribute with the approval request, so a later push does not reset that approval, and there is a dedicated `reset_approvals` endpoint that only bot users with a valid project or group token can call at all. The [approval API documentation](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/api/merge_request_approvals.md) also describes the failure mode that catches automation: if your job approves immediately after creating the merge request, the approval can land before commit processing finishes and get wiped. The documented guard is to wait until `detailed_merge_status` is neither `checking` nor `approvals_syncing` and the diff carries a non-null `patch_id_sha`.
+
+## Azure Repos puts three reset behaviors on one policy
+
+The reset lives under Require a minimum number of reviewers in [branch policies](https://raw.githubusercontent.com/MicrosoftDocs/azure-devops-docs/main/docs/repos/git/branch-policies.md), and the options sit in a section called When new changes are pushed:
+
+- Require at least one approval on every iteration. The most recent pusher's approval does not count against a previous unapproved iteration, so a different person has to approve the latest push. The page places this option at Azure DevOps Server 2022.1 and higher.
+- Require at least one approval on the last iteration, which is the weaker version of the same idea.
+- Reset all approval votes, which clears approvals but deliberately keeps votes to reject or wait.
+- Reset all code reviewer votes, which clears everything including reject and wait.
+
+On the service, the same behavior is reachable through `az repos policy approver-count`, where `--reset-on-source-push` and `--creator-vote-counts` are required parameters. The CLI section carries the service moniker only, so the older Server path is the web UI.
+
+The Azure-specific trap is draft mode. [Pull request documentation](https://raw.githubusercontent.com/MicrosoftDocs/azure-devops-docs/main/docs/repos/git/pull-requests.md) lists the differences from a published PR: build validation policies do not run automatically, voting is disabled, and required reviewers are not added. Marking an already published PR as a draft removes all existing votes, which means moving a pull request back to draft to do cleanup work costs you the approvals you had. That is a different behavior from GitLab and Bitbucket Data Center, where reviewer status survives the draft round trip, and it is easy to trip over when someone parks a pull request for a day.
+
+Azure Repos has no merge queue, so this policy is the only gate that reacts to a push. The [status check policy that lets an AI reviewer actually block a merge](https://mergerequests.dev/blog/azure-repos-merge-gating-for-ai-reviewers-the-status-check-policy/) is a separate policy with separate requirements, and both have to be satisfied.
+
+## Bitbucket Cloud gates the reset behind Premium, Data Center has no check for it
+
+Bitbucket Cloud splits the settings by plan in a way that is easy to misread. The [merge check documentation](https://support.atlassian.com/bitbucket-cloud/docs/suggest-or-require-checks-before-a-merge/) states that merge checks themselves are available to everyone, but that without Premium the user only gets warned about unresolved checks and can still merge. The settings that stop a merge are Premium:
+
+- Reset approvals when the source branch is modified.
+- Keep approvals if there is no change to the diff, which is what preserves approvals on an empty commit or a rebase with no net change.
+- Prevent a merge with unresolved merge checks.
+
+A team on a free or Standard workspace can configure a minimum-approvals check, watch it warn, and still merge anyway, which reads as the check being broken. It is not. It is the plan boundary.
+
+One rule applies on every plan: the pull request author can approve their own PR, but that approval does not count toward the minimum number of approvals for the merge check. An AI reviewer posting an approval as the pull request author therefore contributes nothing on Cloud.
+
+Bitbucket Data Center is the outlier. The [checks for merging page](https://confluence.atlassian.com/bitbucketserver/checks-for-merging-pull-requests-776640039.html) lists five default merge checks: All reviewers approve, Minimum approvals, Minimum successful builds, No changes requested status, and No incomplete tasks. There is no reset-approvals check among them, and the documented extension path is installing a merge check from the Marketplace or writing your own plugin. Merge checks inherit from project to repository unless a repository overrides them, and since Bitbucket 8.10 a project admin can stop repository admins from overriding at all.
+
+Two consequences follow. On Data Center, approvals collected before a push stay collected unless something custom clears them, so a reviewer that approved a broken revision is still recorded as approving the fixed one. And the No changes requested check is the lever a bot has: it blocks a merge when any reviewer has marked changes requested, which is the closest thing Data Center offers to a blocking review decision.
+
+## What the reviewer's own approval is worth after a push
+
+Forge settings decide whether an approval survives. The reviewer decides whether it casts one in the first place, and the three options differ on defaults, plan gates and what happens on the next push.
+
+CodeRabbit's [Request Changes workflow](https://docs.coderabbit.ai/pr-reviews/request-changes-workflow.md) is documented for GitHub, GitLab, Azure DevOps and Bitbucket, is disabled by default, and requires Essentials or above. When enabled, it requests changes when a review posts actionable inline comments and approves once the approval requirements are met. Its [automatic review controls](https://docs.coderabbit.ai/configuration/auto-review.md) show the push behavior: `auto_incremental_review` defaults to true so each push gets an incremental pass, and `auto_pause_after_reviewed_commits` defaults to 5, so a long-lived branch stops getting incremental reviews after five reviewed commits until someone comments `@coderabbitai review`. On a branch that gets pushed twenty times, the last fifteen pushes get no review, and the approval state is whatever it was.
+
+PR-Agent is the self-hosted option, MIT licensed, with a `git_provider` setting that covers GitHub, GitLab, Bitbucket, Azure DevOps, CodeCommit, Gitea and a local mode. Its [review tool documentation](https://raw.githubusercontent.com/qodo-ai/pr-agent/main/docs/docs/tools/review.md) lists `persistent_finding_state` as on by default, with `max_previous_findings_chars` at 8000, which gives the model the earlier findings so it repeats a still-valid one in its original wording and does not re-raise a resolved one unless the code brings it back. On Azure DevOps, findings marked `wontFix` or `byDesign` are passed to the model as dismissed when the status differs from the configured default, which means a human decision to ignore a finding survives later pushes.
+
+Kodus takes the opposite default on blocking. Its [review policy page](https://docs.kodus.io/en/how_to_use/code_review/policy.md) states that Kody posts non-blocking comments by default, with Request Changes and Auto-approve both available as opt-in, and recommends enabling them only once the team agrees on thresholds. Its [code review flow](https://docs.kodus.io/en/how_to_use/code_review/flow.md) documents the skip conditions that matter here: a run with no new commits since the last one is skipped and shows a skipped status rather than a review, and `@kody review --force` overrides that. On self-managed deployments the reset question interacts with the deployment model: Community is free and can be self-hosted or run in Kodus cloud, with Kody Rules capped at 10 and plugins at 3, while model access is bring-your-own-key on every plan. That last detail decides whether a re-review after a push costs the vendor's tokens or yours.
+
+| Reviewer | Blocks a merge by default | Plan or edition gate | Behavior on a new push | Self-hosted |
+|---|---|---|---|---|
+| CodeRabbit | No, Request Changes is opt-in | Essentials or above for Request Changes; all four forges supported | Incremental review on by default, pauses after 5 reviewed commits | Not stated |
+| PR-Agent | Not by itself; blocking comes from your forge policy | None, MIT | Persistent finding state on by default, 8000-character budget for earlier findings | Yes, `git_provider` covers all three forges |
+| Kodus | No, Request Changes and Auto-approve are opt-in | Community is free; Kody Rules 10 and plugins 3 on Community | Skips when there are no new commits; `@kody review --force` overrides | Yes, Community and Enterprise |
+
+| Forge and edition | Default on push | Configurable | Where |
+|---|---|---|---|
+| GitLab (Premium, Ultimate) | Approvals removed | Keep, remove all, or remove Code Owner approvals only | Project settings, cascadable from a top-level group |
+| Azure Repos Services | Votes are not reset unless the policy says so | Last iteration, every iteration, reset approvals only, or reset all votes | Require a minimum number of reviewers policy |
+| Azure DevOps Server | Same, with the every-iteration option at 2022.1 and above | Same | Same, plus the older Server UI path |
+| Bitbucket Cloud | Warns only on non-Premium plans | Reset on source branch change, keep approvals if the diff is unchanged | Branch restrictions, merge checks; Premium for the blocking versions |
+| Bitbucket Data Center | Approvals are kept | No built-in check; custom merge check or plugin required | Project or repository merge checks |
+
+## What to configure first
+
+The order that costs the least is decided by what happens when a setting is wrong. On GitLab, the wrong default is already active: approvals reset on every push, so the work is deciding whether that is what you want and whether Code Owners need the narrower option. On Bitbucket Cloud, the wrong default is plan-driven and the failure is silent, because a merge check that only warns looks identical to a merge check that works until someone merges around it. On Bitbucket Data Center, the default is permissive, so a team that assumes a push invalidates approvals is assuming something the product does not do.
+
+The setting I would fix first on any of the three is the one that makes a bot's approval count toward a gate. An AI reviewer that approves without its approval counting, or that stops reviewing after five commits on a busy branch, produces a merge request that looks reviewed and is not. The forge-side rules are documented and readable. The reviewer-side defaults are where the gap between the two usually sits.
+
+## FAQ
+
+**Does a rebase reset approvals on GitLab?**
+
+Not necessarily. GitLab compares the new `git patch-id` against the previous one, so a rebase that produces the same diff keeps existing approvals even though the commits were rewritten.
+
+**Can an AI reviewer's approval satisfy a required-approval rule on Bitbucket Cloud?**
+
+Not if it posts as the pull request author. The author can approve, but that approval does not count toward the minimum number of approvals for the merge check.
+
+**Does Azure DevOps Server have the every-iteration approval option?**
+
+The branch policies documentation places Require at least one approval on every iteration at Azure DevOps Server 2022.1 and higher. Older Server installations get the last-iteration option and the two vote-reset options instead.
