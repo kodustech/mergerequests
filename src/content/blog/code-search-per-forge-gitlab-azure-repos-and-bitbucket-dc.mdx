@@ -1,0 +1,106 @@
+---
+title: "Code search per forge: GitLab, Azure Repos and Bitbucket DC"
+description: "Code search and review context on multi-forge setups: what GitLab, Azure Repos and Bitbucket Data Center let an AI reviewer retrieve."
+pubDate: 2026-10-25
+category: "guide"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codesearch"]
+---
+
+Code search looks like one feature across GitLab, Azure Repos and Bitbucket Data Center when you use it from the web UI. Underneath, each is a different service with its own licensing, permissions and API surface, and that difference decides what an automated reviewer can read before it posts a comment. If you are wiring an AI reviewer into one of these forges, the useful question is whether a non-human identity can query the index the forge built, and what you have to run to make that true.
+
+## The UI feature and the bot's access path are separate problems
+
+Search working for a human tells you nothing about whether a reviewer bot can use it. Two conditions have to hold at the same time: an index has to exist for the repositories you care about, and the credential your bot carries has to be allowed to query it.
+
+GitLab splits those conditions across a tier and an admin action. Azure Repos splits them across an access level and an extension. Bitbucket Data Center blocks the second condition outright for the identity type most integrations use. Same user-visible feature, three different answers to whether a bot gets in.
+
+## GitLab: exact code search needs Premium and a Zoekt node
+
+[Exact code search](https://docs.gitlab.com/user/search/exact_code_search/) is Tier Premium and Ultimate, offered on GitLab.com and GitLab Self-Managed. It is powered by Zoekt, and its rollout history explains why older notes about it are wrong: it started as a beta in GitLab 15.9 behind the `index_code_with_zoekt` and `search_code_with_zoekt` flags, was enabled on GitLab.com and Self-Managed in 16.6, had those flags removed in 17.1, moved from beta to limited availability in 18.6, and reached general availability in GitLab 19.5. Anything you read that describes it as experimental is describing a version you are probably no longer running.
+
+### What Self-Managed has to install
+
+On GitLab.com, exact code search is on by default in paid subscriptions. On Self-Managed, an administrator has to install Zoekt and then enable it, which means at least one Zoekt node connected to the instance. The [Zoekt integration docs](https://docs.gitlab.com/integration/zoekt/) list the supported installs as the Zoekt chart (standalone or as a subchart of the GitLab Helm chart) and the GitLab Operator with `gitlab-zoekt.install=true`. Docker Compose and an Ansible playbook exist for testing, and the docs say so.
+
+Enabling is a UI toggle under Admin > Settings > Search > Exact code search, with separate checkboxes for indexing and searching. Since GitLab 18.10 the same state is manageable with Rake tasks, including `gitlab:zoekt:index`, `gitlab:zoekt:disable`, `gitlab:zoekt:pause_indexing` and `gitlab:zoekt:estimate_storage`. That last one matters if you are the person who has to find disk for the index.
+
+One detail that catches people: Zoekt handles code search only. It does not replace Elasticsearch or OpenSearch, which are still required for comments, commits, issues, merge requests, wikis and the rest of the non-code scopes.
+
+### Limits that bite during review
+
+The documented known issues are the ones that will show up in real reviews. Exact code search works only on the default branch of a project, and only on files smaller than 1 MB with fewer than 20,000 trigrams. Multiple matches on a single line count as one result. The index itself reports a maximum of 500,000 files per project, a 1 MB maximum file size and a 30-minute indexing timeout per project.
+
+For a reviewer looking for a helper function that lives on a long-lived release branch, the default-branch restriction is the practical one. The index will not have that file at all, and the reviewer has no way to know that from the search result.
+
+## Azure Repos: the Code Search extension and its REST endpoint
+
+Code search in Azure Repos comes from the [Code Search extension](https://learn.microsoft.com/en-us/azure/devops/project/search/functional-code-search?view=azure-devops) on the Marketplace, which is also how the capability reaches Azure DevOps Server according to the documentation's Server rows. Access requirements are documented per project visibility: Basic access for a private project, Stakeholder for a public one, since Stakeholder does not include code.
+
+The extension is what gives you the query syntax worth knowing about: `proj:`, `repo:`, `path:`, `file:`, `ext:` and code-element filters such as `class:`, `def:`, `ref:`, `comment:` and `strlit:`. Results are access-based, so a search across the organization returns only what the authenticated identity can see.
+
+### The REST endpoint a reviewer would call
+
+There is a real endpoint for this. [Fetch Code Search Results](https://learn.microsoft.com/en-us/rest/api/azure/devops/search/code-search-results/fetch-code-search-results?view=azure-devops-rest-7.1) in the Search API 7.1 is a POST to the `almsearch.dev.azure.com` host, under the organization and project path `/_apis/search/codesearchresults`, scoped with `vso.code`. The request body takes `searchText`, filters for Project, Repository, Path, Branch and CodeElement, plus `$top`, `$skip`, `includeFacets` and `includeSnippet`, so you can ask for the matched snippet instead of just a file path.
+
+That is a genuinely different position from the other two forges. Azure Repos gives an automated client a documented way to search code contents and get a snippet back, as long as the extension is installed and the identity has Basic access.
+
+### What it will not cover
+
+Code search does not work for forked repositories. If your workflow is external contributors opening PRs from forks, that is a gap you plan around rather than fix. The documented REST reference is the Services form.
+
+## Bitbucket Data Center: the REST Search group reports index health only
+
+Bitbucket Data Center has code search in the UI, and the [REST reference](https://developer.atlassian.com/server/bitbucket/rest/v1000/) has a module named Search. Reading that module is where the difference lands: every operation in it is about indexing, not about code.
+
+The group covers repository indexing details, indexing queue details, a queued-status check, a reindex call, a worker restart, a list of repositories in the BROKEN indexing state, and a snapshot of the indexing thread. The indexing details response gives you `status`, `lastIndexedCommitId`, `lastIndexedTimestamp` and, when the status is BROKEN, an `indexingError`. What it never gives you is a query string, a match or a snippet.
+
+Two constraints make this harder than it first looks. The indexing endpoints require REPO_ADMIN permission on the repository, and SYS_ADMIN for the broken-index list. The reference also states that Forge and OAuth2 apps cannot access these REST resources at all. So the identity most integrations use to talk to Bitbucket Data Center is exactly the identity that cannot read the index status, let alone contents.
+
+Reindexing is not a free retry either. The endpoint deletes the current index for each repository and queues it for rebuild, and the docs note this can reduce instance performance while a large repository is reindexed.
+
+The consequence is concrete: on Bitbucket Data Center, cross-file context cannot come from forge search. If a reviewer needs to check whether a function exists elsewhere in the repository, it has to fetch files by path or clone the repository and grep locally.
+
+## Comparing the three
+
+| | GitLab | Azure Repos | Bitbucket Data Center |
+|---|---|---|---|
+| What powers code search | Zoekt for exact code search; Elasticsearch/OpenSearch still required for other scopes | Code Search extension (Marketplace) | A search server the instance indexes repositories into |
+| Tier or access | Premium, Ultimate | Basic access for private projects, Stakeholder for public | Bitbucket DC licence; REPO_ADMIN for indexing endpoints |
+| Self-Managed requirement | Admin installs Zoekt: at least one Zoekt node, via the Zoekt chart or the GitLab Operator | Code Search extension installed | Search server configured by the instance admin |
+| Can a bot query code contents? | Yes, via the search API once indexing and searching are enabled | Yes, POST to the Code Search Results endpoint | No endpoint in the Search group accepts a query or returns a match |
+| Documented scope limits | Default branch only; files under 1 MB and under 20,000 trigrams | Forked repositories are not searchable | Forge and OAuth2 apps cannot access the indexing resources |
+
+## What a self-hosted reviewer does instead
+
+The forges that expose the least search surface push integrations toward cloning, and that turns out to be the portable design. A reviewer that checks out the repository under review and greps that checkout does not need the forge's index at all, which means it behaves the same on all three platforms and on the self-managed editions.
+
+[Kodus](https://docs.kodus.io/) takes that path. Its documentation is explicit that a review sees the full repository under review at the PR head commit, plus the PR description, and can grep and read any file in that checkout. The same page states the boundary just as clearly: that checkout cannot see other repositories, submodule contents, or installed dependencies. Kody works across GitHub, GitLab, Bitbucket, Azure Repos and Forgejo, and it runs self-hosted, which matters if you are on Bitbucket Data Center or GitLab Self-Managed and cannot send code to a SaaS reviewer.
+
+The gap that clone-based context leaves is cross-repo contracts, and Kodus addresses it with [Linked Repositories](https://docs.kodus.io/en/how_to_use/code_review/configs/linked_repositories): sibling repositories connected to the same Kodus organization become read-only context, up to three per repository, fetched lazily. A deterministic gate scans the added lines of the diff for boundary surface such as string literals, exported symbols, DTO field keys and contract-like paths, and only then enables the cross-repo tools, so an internal refactor does not trigger it. Findings land on the PR's own diff and are tagged `[cross-repo]` with the counterpart file named.
+
+That capability is not on every plan, and this is where the decision gets real for self-hosted teams. Community is free and can run self-hosted or in the cloud on your own model key, but it caps Kody Rules at 10 and plugins at 3 and does not include Linked Repositories or the Cockpit metrics. Linked Repositories is documented as Teams and Enterprise, and Teams is cloud only. A team that needs self-hosted deployment and cross-repo context is looking at Enterprise, not at the free tier.
+
+## How to decide
+
+If you are on GitLab Premium or Ultimate and someone will run the Zoekt node, the forge index is a legitimate source of context, with the default-branch limitation understood up front. If you are on Azure Repos with the Code Search extension installed, the REST endpoint is the cleanest of the three and worth using directly. If you are on Bitbucket Data Center, plan for clone-based retrieval from the start, since the API will tell you the index is BROKEN but never what is in it.
+
+Whatever you pick, verify the permissions path with the identity the bot actually uses rather than an admin's browser session, and check what the reviewer does with a file that is not on the default branch. Those two checks catch most of the cases where search appears to work and context silently comes back empty. The same limits shape what a reviewer can even see in a [large pull request](https://mergerequests.dev/blog/what-gitlab-azure-devops-and-bitbucket-hide-in-large-prs/), and on the self-managed editions the [tooling that runs inside your network](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/) is a separate constraint from search entirely.
+
+## FAQ
+
+### Does Bitbucket Data Center have an API to search code?
+
+The REST reference documents a Search module containing only indexing operations: repository indexing details, queue details, queued status, reindex, worker restart, broken-index repositories and an indexing thread snapshot. No endpoint in that group accepts a query string or returns a code match, so cross-file context requires fetching files by path or cloning the repository.
+
+### Does GitLab code search work on branches other than the default?
+
+No. Exact code search is documented as working only on the default branch of a project, and only on files smaller than 1 MB with fewer than 20,000 trigrams.
+
+### Is GitLab code search available on Self-Managed?
+
+Yes, on Premium and Ultimate, but an administrator must install Zoekt first, with at least one Zoekt node connected to the instance, and then enable indexing and searching.
+
+### Can an Azure Repos bot use code search?
+
+Yes, with the Code Search extension installed and at least Basic access for private projects. The Search API 7.1 exposes a POST endpoint for code search results with Project, Repository, Path, Branch and CodeElement filters and an option to include matched snippets.
