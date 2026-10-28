@@ -1,0 +1,78 @@
+---
+title: "Reviewing AI-generated code at volume: the ceilings per forge"
+description: "multi-forge reference: the forge quota, vendor review quota and trigger cadence that cap AI review volume on GitLab, Azure Repos and Bitbucket DC."
+pubDate: 2026-10-28
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+faq:
+  - q: "Why does AI code review stop working when pull request volume goes up?"
+    a: "Because three separate ceilings exist, and each fails differently. The forge throttles API calls, the vendor caps how many reviews you get, and the reviewer's own trigger cadence decides how many times it runs on a single pull request. Adding a reviewer multiplies load against the forge ceiling it already shares with your pipelines."
+  - q: "Who pays for a GitLab Code Review Flow run?"
+    a: "The namespace, not the person who started it. Foundational flows like Code Review Flow run as a service account with composite identity, so the usage is billed to the namespace and draws from the monthly commitment pool and then on-demand credits, at $1 per credit."
+  - q: "Does Azure DevOps return an error when it delays a request?"
+    a: "No. A delayed request still returns HTTP 200 with Retry-After and the X-RateLimit headers set. A client that logs success on any 2xx records requests that never ran, and the delay ranges from a few milliseconds up to 30 seconds."
+  - q: "What is a TSTU on Azure DevOps?"
+    a: "An Azure DevOps throughput unit, an abstract measure of load blending database, compute and storage consumption. One TSTU is the average load of a typical user over five minutes, normal activity produces spikes of 10 TSTU or less, and the global limit is 200 TSTU in any sliding five-minute window."
+  - q: "Is Bitbucket Data Center's rate limiting per instance or per user?"
+    a: "Per user, using a token bucket. Defaults are a bucket size of 60 requests and a refill rate of 5 per second, applied to HTTP requests with basic or bearer authentication such as REST API calls. In a cluster, each user gets a separate bucket on each node."
+---
+
+AI code review usually gets evaluated on quality and then deployed into a volume problem. The reviewer that looked sharp on a five-file pull request meets a backlog where an agent opens twelve a day, each one large, each one pushed to three times before it is ready. What breaks first is not the model. It is one of three ceilings that nobody configured deliberately: the forge's API quota, the vendor's review quota, and the reviewer's own trigger cadence.
+
+Those three live in different products, are owned by different people, and fail in ways that look like something else. The forge ceiling looks like an outage. The vendor ceiling looks like the reviewer going quiet. The cadence ceiling looks like a reviewer that stopped noticing new commits. Each one has documented numbers, and for the two self-managed forges the numbers are yours to set.
+
+## The forge ceiling comes first, because everything shares it
+
+An AI reviewer is an API client. It reads diffs, posts comments, updates statuses, and every one of those calls draws from the same quota as your pipelines, your scripts, and your dashboards. Volume is what makes that quota visible.
+
+Azure DevOps publishes the clearest numbers, and the behavior is the part worth internalizing. Consumption is measured in Azure DevOps throughput units, an abstract blend of database, compute and storage load. One TSTU is the average load of a typical user over five minutes; [the rate limits page](https://learn.microsoft.com/en-us/azure/devops/integrate/concepts/rate-limits?view=azure-devops) puts normal activity at spikes of 10 TSTU or less, larger but less frequent spikes up to 100, and the global limit at 200 TSTU within any sliding five-minute window. A user is delayed when their personal usage exceeds 200 times a typical user in that window, with delays from a few milliseconds up to 30 seconds.
+
+The trap is the response code. A delayed request still returns HTTP 200, with `Retry-After` and the `X-RateLimit-Delay` header carrying the delay. A client that treats any 2xx as success records requests that never ran, and a review that silently did not happen looks identical to a review that found nothing. Only sustained overuse produces the unambiguous HTTP 429 with `TF400733`. If you are building or configuring a bot against Azure Repos, reading `X-RateLimit-Remaining` and treating a non-zero delay as a failure is the difference between a working integration and a mystery. Note also that the documented remedy for a higher ceiling is an access level, not a setting: the identity your integration uses needs Basic + Test Plans.
+
+Bitbucket Data Center gives you a real lever here. [Rate limiting](https://confluence.atlassian.com/spaces/BitbucketServer/pages/976171954/Improving+instance+stability+with+rate+limiting) is a token bucket per user, off by default, with defaults of 60 tokens and a refill rate of 5 per second. It applies to HTTP requests using basic or bearer authentication, so REST API calls and Git over HTTP, while Git SSH operations are a separate mechanism. Exhaustion returns 429, records a `rate-limited` event in the access log, and surfaces in JMX metrics. Two details matter when a bot misbehaves. First, you can give a specific user an exemption, either custom bucket settings or unlimited requests, which is the clean way to stop your reviewer competing with your pipelines for the same bucket. Second, in a cluster every user gets a separate bucket on every node, so a three-node instance gives each user three buckets and the global settings apply to each.
+
+GitLab's forge-side limits are documented per endpoint rather than as a single quota page, and the relevant ones for a review bot are the write endpoints it hammers: notes and comments. Those are the limits to check before blaming the reviewer.
+
+## The vendor ceiling: reviews per hour, or credits per month
+
+The second ceiling belongs to whatever reviews your code, and the pricing models are not comparable at face value.
+
+CodeRabbit meters reviews. [Its plans page](https://docs.coderabbit.ai/management/plans) lists per-developer, per-hour rolling allowances: 1 review per hour on Free and that is summarization only, 5 on Essentials, 8 on Team, 10 on Advanced, 12 on Enterprise. Files per review are a separate cap, 5 on Essentials up to 12 on Enterprise, counted after path filters are applied. A team that runs one pull request per developer per day never touches this. A team where an agent opens several pull requests per developer per hour hits it during a normal working morning, and the failure is a review that never starts. Essentials and above can enable usage-based reviews to keep processing past the allowance, with the caveat that pull requests above 300 files are not supported through usage pricing at all, and that the Fair Usage Limits Policy lets availability adjust under sustained high volume.
+
+GitLab meters credits instead. [GitLab Credits](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/subscriptions/gitlab_credits.md) are the consumption currency, with included credits allocated per user per month and no rollover, a shared monthly commitment pool, and on-demand usage at $1 per credit once everything else is spent. The detail that decides how a volume spike lands: a flow that runs as a service account with composite identity is billed to the namespace, not to the user who started it. Code Review Flow is one of those. So a busy team draws from the namespace pool rather than from individual allowances, which is a simpler model to reason about and a worse one to attribute, since you cannot reserve part of the pool for a subset of users. Usage caps on the dashboard are the available control. On the Free tier, on-demand usage is capped at $25,000 per calendar month and switches off automatically when it is reached.
+
+The self-managed split is the one that catches teams mid-deployment. [GitLab Duo Core](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/subscriptions/subscription-add-ons.md) arrives automatically with Premium or Ultimate on 18.0 and later, but it is not available on GitLab Duo Self-Hosted under an offline license, because Core needs a connection to the GitLab AI Gateway. If you want self-hosted models on an air-gapped instance, the Agent Platform Self-Hosted add-on is the path, and it is billed as a flat fee under an Enterprise License Agreement rather than by usage, which makes the cost predictable and the capacity commitment real.
+
+Azure Repos Copilot code review meters nothing in the same way. Billing runs through [Azure Cost Management](https://learn.microsoft.com/en-us/azure/devops/repos/git/copilot-code-reviews?view=azure-devops) on an Azure subscription linked to the organization, and the volume lever is the review effort level, set per project with optional per-repository override, where higher effort consumes more tokens and increases cost. Users can pick a different effort for a single review. That makes cost a per-review decision rather than a plan limit, which suits teams that want to spend effort where it matters and not on every agent-generated pull request.
+
+Kodus sits at the other end of that spectrum: reviews are unlimited on every plan because it runs on your own model key. The free Community tier is self-hosted or cloud with up to 10 Kody Rules and 3 plugins, Teams is $10 per active developer per month on cloud, and Enterprise is custom with self-hosting. The ceiling is technical rather than commercial, at 2,000 changed files, past which the pull request is not reviewed.
+
+| What is metered | Model | Where the volume bites |
+|---|---|---|
+| Azure DevOps forge API | TSTU, 200 per sliding 5-minute window, delays up to 30s | Bot API calls share the quota with pipelines; delays return HTTP 200 |
+| Bitbucket DC forge API | Token bucket per user, 60 size / 5 per second, off by default | Cluster gives each user a separate bucket per node; exemptions are per user |
+| CodeRabbit | 5-12 reviews per developer per hour, 5-12 files per review | Sustained bursts exhaust a rolling hourly allowance; no usage pricing above 300 files |
+| GitLab | Credits: included per user, then shared pool, then $1 per credit | Code Review Flow bills the namespace, so a team spike drains a shared pool |
+| Azure Repos Copilot | Azure subscription via Cost Management, effort level per review | Cost scales with effort and frequency, not with a plan limit |
+| Kodus | Nothing per review; BYOK token cost to your provider | Hard stop at 2,000 changed files per pull request |
+
+## The cadence ceiling: how many times one pull request gets reviewed
+
+The third ceiling is internal to the reviewer, and it is the one teams most often discover by accident.
+
+Kodus documents its trigger model explicitly. [The review flow](https://docs.kodus.io/en/how_to_use/code_review/flow) runs on pull request open, on new commits, or on a `@kody start-review` comment, and it skips when there are no new commits since the last run, when the changes are merge-only, when every changed file matches an ignore pattern, when the file limit is exceeded, or when the pull request is in draft mode and configured to skip drafts. The cadence setting is the volume control: automatic reviews every push, auto-pause during rapid consecutive pushes with a default of 3 pushes in 15 minutes, or manual only. A force re-run is available with `@kody review --force`, which matters because a plain `start-review` will skip again if there is nothing new.
+
+CodeRabbit has an equivalent default that behaves the same way without being set. `auto_pause_after_reviewed_commits` defaults to 5, so incremental reviews pause after five reviewed commits. On a pull request that an agent pushes to eight times, the last three pushes get no review, and nothing on the pull request says so. Combined with the per-developer hourly allowance, that is two independent limits that both express themselves as silence.
+
+The consequence is that the useful question about a review setup is not how good the findings are. It is how many reviews per pull request you are actually buying, and whether the answer is the one you assumed.
+
+## What to set before volume arrives
+
+The ordering matters, because the ceilings interact.
+
+Raise the forge ceiling first, since it is the only one that takes down things other than your reviewer. On Bitbucket Data Center that means turning rate limiting on deliberately and giving the review bot an exemption, rather than leaving it off and discovering the problem when someone enables it. On Azure Repos it means reading the delay headers in whatever integrates, because the 200 response will not tell you.
+
+Then decide whether your reviewer is metered by reviews or by credits, because the failure looks different. A metered-by-review allowance runs out mid-morning and comes back on a rolling window; a credit pool drains and needs a purchase or an on-demand acceptance. Both are visible in advance if you look at the numbers rather than at the pull request.
+
+Then set the cadence to match how your team actually pushes. Auto-pause defaults exist because reviewers that comment on every push generate noise, and a reviewer nobody reads is the same as no reviewer. For teams running agents that push frequently, reviewing once on open and once when the pull request is marked ready is usually a better use of the same budget than reviewing every intermediate push, and it sidesteps the cadence pause entirely.
