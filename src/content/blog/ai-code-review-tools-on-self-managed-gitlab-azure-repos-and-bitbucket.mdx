@@ -1,0 +1,82 @@
+---
+title: "AI code review tools on self-managed GitLab, Azure Repos and Bitbucket"
+description: "multi-forge comparison: which AI code review tools actually support self-managed GitLab, Azure Repos and Bitbucket Data Center, per each vendor's own docs."
+pubDate: 2026-10-30
+category: "comparison"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+faq:
+  - q: "Does GitHub Copilot code review work on Azure DevOps Server?"
+    a: "No. Copilot code review for Azure Repos is documented for Azure DevOps Services only, and as of the current docs it is in limited preview. There is no Azure DevOps Server edition of the feature."
+  - q: "Does Bitbucket Data Center have a native AI code reviewer?"
+    a: "No. Bitbucket Data Center ships no AI reviewer of its own, so review gating comes from merge checks and any bot you connect through the REST API or webhooks."
+  - q: "What is the minimum self-hosted deployment for Kodus?"
+    a: "The project README documents Docker on a VM you control, with at least 2 CPU cores, 8 GB of RAM and 60 GB of free disk. The Community edition is free and self-hosted, with reviews running on your own model key."
+  - q: "Which vendors publish an open self-hosting install guide?"
+    a: "Kodus and PR-Agent publish theirs openly. CodeRabbit's self-hosted edition is Enterprise-only for organizations with 500 or more user seats, and deployment instructions are provided during onboarding rather than published."
+---
+
+AI code review tools get compared on review quality, price per seat, and how well they handle a large diff. For a team running self-managed GitLab, Azure Repos or Bitbucket Data Center, none of those criteria decides whether a tool is installable in the first place. Edition coverage does.
+
+I looked at the current search results for an AI code review tool comparison before writing this. Nine organic results, all feature-and-price listicles, and not one of them compares which forge editions each tool supports. Self-hosting shows up as a sentence at best.
+
+So here is that column, per each vendor's own documentation.
+
+## What each forge ships itself
+
+A native reviewer is the cheapest thing to turn on, and the easiest thing to assume exists everywhere. It does not.
+
+GitLab has two code review features, and which one runs is decided by the seat of the user who initiates the review. [GitLab Duo Code Review](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/user/project/merge_requests/duo_in_merge_requests.md) is the non-agentic one: Premium or Ultimate tier, GitLab Duo Enterprise add-on required, single-pass analysis over the merge request and its diffs. Code Review Flow is the agentic one, part of the GitLab Duo Agent Platform, no add-on required, billed in GitLab Credits, and it reads earlier GitLab Duo threads when it evaluates a new push. Both run on GitLab.com, Self-Managed and Dedicated, and both can run in the same project. A group Owner can force every review onto Code Review Flow, but a user holding a Duo Enterprise seat still gets the non-agentic feature by default, because that path does not consume Credits.
+
+That seat-based routing is the kind of detail that makes a rollout look inconsistent. One developer requests a review and gets a single-pass diff read, another requests one and gets a multi-step agent that remembers what it said last time. If your team is trying to make AI review follow your own rules, the routing behaviour is part of what you are configuring, not a footnote.
+
+On Azure Repos, [Copilot code review](https://learn.microsoft.com/en-us/azure/devops/repos/git/copilot-code-reviews?view=azure-devops) is in limited preview and it is Azure DevOps Services only. There is no Azure DevOps Server edition. Enabling it walks down three scopes: a Project Collection Administrator turns it on for the organization, a Project Administrator can then enable it per project, and a repository owner enables it per repository unless an Enable all option is used at a higher level. Automatic reviews require a branch policy on each target branch. Usage bills through Azure Cost Management against an Azure subscription linked to the organization, and the effort level set per project or repository changes how many tokens a review burns. TFVC repositories are not supported. The [Services versus Server split per tool](https://mergerequests.dev/blog/ai-code-review-on-azure-devops-services-vs-server-per-tool/) is worth checking before you plan anything around it.
+
+Bitbucket Data Center ships no AI reviewer at all. Review gating there comes from merge checks and from whatever bot you connect through the REST API and webhooks, which is the subject of [what is native on Bitbucket Data Center and what is not](https://mergerequests.dev/blog/ai-code-review-on-bitbucket-data-center-whats-native-what-isnt/).
+
+## Third-party reviewers, by edition coverage
+
+Now the tools that do the reviewing for you, and the edition limits each one documents.
+
+[CodeRabbit](https://docs.coderabbit.ai/platforms/overview) lists GitHub.com, GitHub Enterprise Server, GitLab.com, GitLab self-managed, Bitbucket Cloud, Bitbucket Data Center and Azure DevOps. Two details decide whether that list holds for your instance. Self-managed GitLab needs [version 16.x or above](https://docs.coderabbit.ai/platforms/self-hosted-gitlab), and the docs warn that 15.x may fail to post review comments or complete sign-up at all, which reads as a version requirement rather than a permissions mistake. On Bitbucket Data Center there is a specific limitation: Bitbucket versions that reject reviewer event subscriptions cannot send reviewer transitions to CodeRabbit, so its review state can go stale. Check that against your DC version before you commit.
+
+[Qodo](https://docs.qodo.ai/llms.txt) lists GitHub, GitLab, Bitbucket, Azure DevOps and Gerrit, with multi-tenant, single-tenant and on-premises deployment models. The GitLab entry splits into separate Cloud and Server install paths. Azure DevOps appears as a single entry without an edition qualifier.
+
+[PR-Agent](https://raw.githubusercontent.com/qodo-ai/pr-agent/main/README.md) is the open-source option, and its README is blunt that it is a community-maintained legacy project that Qodo donated, now living in its own GitHub org. It covers GitHub, GitLab, Bitbucket, Azure DevOps and Gitea, and it runs as a CLI, a GitHub Action, a container, or behind a webhook. Two operational details matter on upgrade: releases from 0.34.2 onward publish under a new Docker Hub namespace while older tags stay frozen in the old one, so pinned image references need updating, and the `/help_docs` tool is disabled as of v0.36.1 pending a fix for a credential-exposure issue.
+
+[Kodus](https://github.com/kodustech/kodus-ai) reviews GitHub, GitLab, Bitbucket, Azure DevOps and Forgejo, runs on your own model key on every plan, and its Community edition is free and self-hosted. The documented self-hosting floor is Docker on a VM you control with at least 2 CPU cores, 8 GB of RAM and 60 GB of free disk. Two limits are worth knowing before standardizing on it: Community caps Kody Rules at 10 and active plugins at 3, and no plan reviews a pull request with more than 2,000 changed files. Its self-host section names self-managed GitLab and Forgejo as connection targets; self-hosting against Azure DevOps Server is not stated in the README.
+
+## Comparison table
+
+| Tool | GitLab Self-Managed | Azure DevOps | Bitbucket Data Center | Self-hosted path |
+| - | - | - | - | - |
+| GitLab Duo (native) | Yes. Premium/Ultimate; add-on or Credits depending on which feature runs | Not available | Not available | Self-hosted models; offline flow needs 18.9+ and a pre-purchase cloud-licensing exemption |
+| GitHub Copilot code review (native) | Not available | Azure Repos, Services only, limited preview | Not available | Not available |
+| CodeRabbit | Yes, 16.x+ | Yes | Yes, with a reviewer-event caveat on older versions | Enterprise only, 500+ user seats, container image |
+| Qodo | Yes (GitLab Server install path) | Yes, edition not stated | Yes | On-premises, Kubernetes |
+| PR-Agent | Yes | Yes | Yes | Docker, CLI or webhook; open source |
+| Kodus | Yes | Yes | Yes | Community, free, Docker on a VM (2 cores / 8 GB / 60 GB) |
+
+## What self-hosting costs per vendor
+
+Air-gapped and private-network deployments are where the edition differences stop being a checkbox and become a project.
+
+CodeRabbit's [self-hosted edition](https://docs.coderabbit.ai/self-hosted/overview) is Enterprise-only and requires 500 or more user seats. It runs as a container image inside your infrastructure, keeps code and pull request data in your network, and sends prompts to the model provider you configure. For a Git platform that cannot accept inbound connections, the CodeRabbit Reverse Tunnel keeps all connections outbound. Deployment and configuration instructions come to customers during onboarding rather than being published.
+
+Qodo's on-premises path runs on Kubernetes in your own infrastructure. The [self-hosted vendor comparison](https://mergerequests.dev/blog/self-hosted-ai-code-review-coderabbit-and-qodo-per-their-docs/) covers those two in more detail.
+
+GitLab's offline deployment is the heaviest of the set, and it is documented in [full](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/administration/gitlab_duo_self_hosted/offline_deployment.md). You need an opt-out exemption of cloud licensing granted before purchase, GitLab 18.9 or later, and a manual transfer of the AI Gateway image (about 0.6 GiB), the Agent Platform Flows executor (about 0.5 GiB), the vLLM inference server (about 9 GiB) and the LLM weights. The example in the docs uses Mistral Small 24B at roughly 48 GB. The inference host needs NVIDIA GPU drivers, CUDA libraries and the NVIDIA Container Toolkit. ClickHouse is not required for Duo Code Review, only for Duo usage analytics. If there is no GPU and no path to one, the native offline route is not realistic, and a containerized reviewer running on a CPU VM is.
+
+PR-Agent and Kodus both publish their self-hosting openly, which changes the evaluation. You can read the install steps, size the VM and test the thing before talking to a sales team.
+
+## Which one fits which team
+
+If you are on Bitbucket Data Center, the native question has no answer, so you are choosing a bot. That makes the DC version compatibility of reviewer events the thing to verify first, because a reviewer that cannot see approval transitions cannot gate anything reliably.
+
+If you are on GitLab Self-Managed and already pay for Duo Enterprise, the native path is the cheapest to operate, and the seat-routing behaviour is the part to configure deliberately. If you are air-gapped without GPUs, GitLab's offline flow is out of reach and a BYOK containerized reviewer on a CPU VM is the workable option.
+
+If you are on Azure Repos, split by edition. On Services, Copilot code review is worth trying because it is native and the enablement path is documented, but limited preview means the feature set can change without notice. On Azure DevOps Server there is no native option, so every choice is third-party.
+
+For teams that need self-hosting without an enterprise gate, the realistic set is Kodus and PR-Agent, with CodeRabbit and Qodo behind their respective enterprise tiers. Kodus is the one in that group with a free self-hosted edition and BYOK on every plan, and the limits to weigh are the Community rule and plugin caps rather than a seat minimum. PR-Agent costs nothing but puts the operations on you, which is a fair trade if you already run your own infrastructure and would rather patch a container than sign a contract.
+
+The point of the table is not that one tool wins. It is that the ranking changes completely once you filter for the forge edition you actually run.
