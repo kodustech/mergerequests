@@ -1,0 +1,84 @@
+---
+title: "Open source AI code review on GitLab, Azure Repos, Bitbucket DC"
+description: "multi-forge reference: which open source AI code review tools run on GitLab Self-Managed, Azure Repos and Bitbucket Data Center, and where each one stops."
+pubDate: 2026-11-01
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+faq:
+  - q: "Are there open source AI code review tools that work on GitLab Self-Managed and Azure Repos?"
+    a: "Yes. PR-Agent (MIT) and Kodus (AGPL-3.0 core) both review pull requests on GitLab, Bitbucket, and Azure DevOps, and both can be self-hosted. PR-Agent documents which features differ per provider in its supported platforms matrix; Kodus publishes its Community limits and self-hosting requirements in its docs."
+  - q: "Is Kodus fully open source?"
+    a: "The license is split by file. Files containing .ee. in the name and everything under an ee/ directory fall under the Kodus Enterprise Code License; the rest of the source is AGPL-3.0. Community users may run the unmodified enterprise code for internal use, including production, within the limits the software enforces, but may not modify it or use Enterprise-only features."
+  - q: "Can CodeRabbit be self-hosted without an Enterprise contract?"
+    a: "No. CodeRabbit's self-hosted deployment is documented as an Enterprise plan feature, and the docs state it is available to customers with 500 or more user seats."
+  - q: "Is there an on-premises Qodo deployment for Azure DevOps?"
+    a: "Qodo's deployment model table lists on-premises and air-gapped support for GitHub Enterprise, GitLab Self-Managed, Bitbucket Data Center, and Gerrit. Bitbucket Cloud and Azure DevOps Cloud are listed as multi-tenant and single-tenant only, and the table has no on-premises entry for Azure DevOps."
+---
+
+If your forge is GitLab Self-Managed, Azure Repos, or Bitbucket Data Center, there are two open source AI code review projects that will run inside infrastructure you control: PR-Agent and Kodus. Everything else with a self-hosted option is a commercial product attached to a contract and a seat floor, which is a different kind of purchase.
+
+Both of them review pull requests on all three forges, both let you point the model layer at a provider you already pay, and both can run with no outbound internet if you host the model too. What separates them is the license and which features survive on each provider.
+
+## License and provider coverage are separate questions
+
+A tool can be free to self-host without being open source. CodeRabbit's self-hosted deployment ships as a container image you run in your own environment, and it is scoped to the Enterprise plan, with the docs putting the entry point at 500 or more user seats. That is a reasonable product to sell, and it is a procurement conversation rather than a git clone. The reverse also happens, where a permissively licensed project cannot do a specific thing on your forge because the provider API does not expose the hook that feature needs.
+
+So the questions that matter for a self-managed team are what the license permits and what the tool can actually do on your forge.
+
+## PR-Agent is MIT, and the license is held by the project
+
+The [PR-Agent repository](https://github.com/The-PR-Agent/pr-agent) carries an MIT license held by the project itself, not by a vendor, and the README states plainly that this is a community-owned project Qodo donated and that it is separate from Qodo's commercial product. That distinction matters when you are choosing something to run for the next three years: the license cannot be re-scoped by a company that later changes direction.
+
+The most useful document in this whole space is the [supported platforms matrix](https://docs.pr-agent.ai/overview/supported_platforms/), because it lists where features differ per provider instead of claiming uniform support. Describe, Review, Improve, Ask, Add Docs, and Help work on GitHub, GitLab, Bitbucket, Azure DevOps, and Gitea. Ask on code lines works on GitHub, GitLab, and Bitbucket only. Similar Issues is GitHub only. Update CHANGELOG runs everywhere but posts as a pull request comment on Bitbucket, Azure DevOps, and Gitea, because those providers cannot push files through the API path the tool uses. Generate Labels on Gitea is marked as not yet verified.
+
+That matrix is the reason to check before you assume. A team on Azure Repos that wants comment-anchored questions is asking for something the project does not list as supported there. The deployment paths for the non-GitHub forges are covered in [PR-Agent on GitLab, Azure DevOps and Bitbucket](https://mergerequests.dev/blog/pr-agent-on-gitlab-azure-devops-bitbucket-the-self-hosted-code-review-option/).
+
+One upgrade detail catches people out: Docker images from 0.34.2 onward are published under the `pragent/pr-agent` namespace, and the older `codiumai/pr-agent` namespace is a frozen archive with no new pushes. Any pinned image reference needs updating before you move versions.
+
+## Kodus splits its license between AGPL-3.0 and an enterprise file license
+
+Kodus is open source in a way that needs one clarification, because the license is split by file rather than applied to the whole repository. Filenames containing `.ee.` and everything under an `ee/` directory fall under the [Kodus Enterprise Code License](https://github.com/kodustech/kodus-ai/blob/main/license_ee.md); the rest of the source is AGPL-3.0.
+
+That enterprise license grants Community users the right to run the unmodified enterprise code as needed to operate Community features, including code review and BYOK model providers, in a self-hosted deployment for internal purposes, production included, within the limits the software enforces. It does not grant the right to modify that code, to bypass the Community limits, or to use Enterprise-only features. Offering Kodus as a hosted or managed service to third parties is not internal use, so a team planning to resell it is outside the grant.
+
+The Community limits are specific rather than vague. The [pricing documentation](https://docs.kodus.io/en/how_to_use/pricing.md) puts Community at up to 10 Kody Rules and up to 3 active plugins, with reviews unlimited on every plan because the model calls run on your own key and Kodus does not mark up tokens. Teams is 10 dollars per active developer per month, cloud only, and Enterprise is contract-priced. The published hard cap is that pull requests with more than 2,000 changed files are not reviewed, which is the kind of limit that only shows up on generated-code branches.
+
+The [repository README](https://github.com/kodustech/kodus-ai) gives the self-hosting floor as Docker on a VM you control, with at least 2 CPU cores, 8 GB of RAM, and 60 GB of free disk. It names self-managed GitLab and Forgejo as the on-premises forges it connects to, and lists GitHub, GitLab, Bitbucket, Azure DevOps, and Forgejo for pull request reviews. Self-hosted instances send one anonymous heartbeat per day carrying aggregated counters with no code, names, or identifiers, and `KODUS_TELEMETRY_DISABLED=true` turns it off.
+
+## The commercial self-hosted tier, and where the seat floor bites
+
+CodeRabbit's [self-hosted option](https://docs.coderabbit.ai/self-hosted/overview.md) runs the review agent in your infrastructure, with the platform integration connecting through a service account or app, and a reverse tunnel for platforms that cannot accept inbound connections. The supported platform list covers GitHub Enterprise Server, GitLab self-managed, Azure DevOps, and Bitbucket Data Center. The docs scope the whole thing to Enterprise customers with 500 or more user seats, which is the number to bring to a budget conversation before you evaluate the product at all.
+
+Qodo's [deployment model table](https://docs.qodo.ai/install-qodo/deployment-model-support) is the page to read if air-gapping is on your requirements list. On-premises and air-gapped deployments are documented for GitHub Enterprise, GitLab Self-Managed, Bitbucket Data Center, and Gerrit. Bitbucket Cloud and Azure DevOps Cloud are listed as multi-tenant and single-tenant only, with on-premises marked unavailable, and Azure DevOps has no on-premises entry in that table at all.
+
+For a team on Azure DevOps Server that is the deciding line, since there is no documented Qodo on-premises path for Azure DevOps. The wider per-tool picture across Services and Server is worth reading in full, and it is laid out in [AI code review on Azure DevOps Services vs Server, per tool](https://mergerequests.dev/blog/ai-code-review-on-azure-devops-services-vs-server-per-tool/).
+
+## Feature coverage across the options
+
+| | PR-Agent | Kodus | CodeRabbit self-hosted | Qodo on-prem |
+| --- | --- | --- | --- | --- |
+| License | MIT, held by the project | AGPL-3.0 core, enterprise-licensed `.ee.` files | Proprietary | Proprietary |
+| Self-hosted path | CLI, Docker, webhook, CI pipeline | Docker on a VM you control | Container image, Enterprise plan only | Contract, per provider |
+| GitLab Self-Managed | Yes | Yes | Yes | Yes, air-gapped documented |
+| Azure Repos | Yes per the provider matrix (Services and Server not split) | Yes, provider list does not split editions | Listed as Azure DevOps, edition not qualified | Cloud only, no on-premises entry |
+| Bitbucket Data Center | Yes | Yes | Yes | Yes, air-gapped documented |
+| Air-gapped | Yes, with a self-hosted model | Yes, with a self-hosted model | Private-network option via reverse tunnel | Documented for GitHub Enterprise, GitLab SM, Bitbucket DC, Gerrit |
+| Cost | None | Community free, Teams 10 dollars per active dev per month | Enterprise contract | Contract |
+| Documented limits | Per-provider feature gaps in the matrix | 10 Kody Rules and 3 plugins on Community, 2,000 changed files | 500+ user seats | Not stated in the deployment table |
+
+Neither PR-Agent nor Kodus splits Azure DevOps Services from Azure DevOps Server in its provider list, so if you run Server, treat the Azure DevOps row as needing a direct test rather than a documentation check.
+
+## What GitLab ships itself, and what running it offline takes
+
+GitLab's own AI review is Duo, and which feature runs depends on the seat. A user holding a GitLab Duo Enterprise seat gets GitLab Duo Code Review, which is single-pass and scoped to the merge request and its file diffs. Everyone else gets Code Review Flow, which needs no add-on but consumes GitLab Credits, and a group Owner can configure all reviews to use Code Review Flow regardless of seat type. The routing table is in the [GitLab Duo in merge requests documentation](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/user/project/merge_requests/duo_in_merge_requests.md).
+
+Running that offline is a separate project with its own prerequisites. Offline flow execution needs GitLab 18.9 or later, and the setup requires an opt-out exemption of cloud licensing arranged before purchase, which means it is a sales conversation and not a config flag. You then move the AI Gateway image, the Agent Platform Flows executor image, the vLLM inference server image, and the model weights to the internal registry and filesystem by hand, roughly 0.6 GiB, 0.5 GiB, and 9 GiB compressed before the weights, per the [offline deployment documentation](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/administration/gitlab_duo_self_hosted/offline_deployment.md). The self-managed angle where review policy comes from your team instead of a vendor default is covered in [GitLab Self-Managed AI review that follows your own rules](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/).
+
+## Which of these fits your team
+
+If forking and modifying the reviewer matters to you, PR-Agent is the only option in this set that grants it, and you accept the per-provider gaps its matrix documents instead of discovering them during rollout. The cost is operational: you run it, you own the model routing, and you own the upgrades.
+
+If the part you care about is review policy your team writes in plain language, plus delivery metrics and a dashboard, Kodus covers the same forges with a self-hosting floor you can size from the README, and the trade-off moves from licensing to the Community limits on rules and plugins. A team that wants more than 10 rules is looking at a per-developer fee rather than a fork.
+
+If the constraint is that nothing leaves the network, the open source pair is the practical field for Bitbucket Data Center and GitLab Self-Managed, and it is the only field for Azure DevOps Server. Commercial self-hosting starts with an Enterprise contract and a seat threshold, and Qodo's own table does not list Azure DevOps on-premises. That is a narrow field, but it is a real one, and the difference between the two options comes down to whether you want to operate a CLI-and-webhook tool you can modify or a self-hosted service with a rule layer and a UI.
