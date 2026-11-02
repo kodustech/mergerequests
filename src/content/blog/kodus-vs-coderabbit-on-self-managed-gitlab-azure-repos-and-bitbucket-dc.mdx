@@ -1,0 +1,82 @@
+---
+title: "Kodus vs CodeRabbit on self-managed GitLab, Azure Repos and Bitbucket DC"
+description: "Kodus vs CodeRabbit for teams on self-managed GitLab, Azure Repos and Bitbucket DC: self-host floor, plan gates and per-forge behavior, per both vendors' docs (multi)"
+pubDate: 2026-11-02
+category: "comparison"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "selfmanaged"]
+faq:
+  - q: "Can CodeRabbit run self-hosted on GitLab, Azure DevOps or Bitbucket Data Center?"
+    a: "Yes, but only on the Enterprise plan and only for organizations with 500 or more user seats. CodeRabbit runs the review agent as a container image inside your infrastructure and supports GitHub Enterprise Server, GitLab self-managed, Azure DevOps and Bitbucket Data Center. Deployment instructions are provided during onboarding rather than published openly."
+  - q: "Does Kodus run self-hosted on a free plan?"
+    a: "Yes. The Community plan is free and can be self-hosted or run in the cloud, with BYOK and unlimited reviews. It ships as Helm charts for Kubernetes and OpenShift plus a generic VM install. The documented hard limit is that Kodus does not review a PR with more than 2,000 changed files."
+  - q: "Why do AI review tools behave differently on Azure Repos than on GitLab?"
+    a: "Azure Repos has no reaction API and no pull request labels of the kind conditional-approval features assume. On Azure Repos, Kodus posts its status emoji as a comment instead of a reaction, and its label-based conditional auto-approve conditions cannot be satisfied, so every PR is held for a person. The same API gap limits any reviewer on that forge."
+  - q: "What GitLab version does CodeRabbit require for self-managed instances?"
+    a: "CodeRabbit supports GitLab 16.x and above. Its docs warn that 15.x may experience review comments not being posted or the sign-up process not working at all, and recommend upgrading the instance."
+---
+
+CodeRabbit and Kodus both review pull requests on self-managed GitLab, Azure Repos and Bitbucket Data Center, but they get there from opposite ends of the market. CodeRabbit's self-hosted edition is an Enterprise deployment with a 500-user-seat floor, sold through sales. Kodus runs self-hosted on a free Community tier, with a paid cloud tier for teams that would rather not run the containers themselves.
+
+That gap decides the budget conversation before any feature comparison starts. A team that cannot sign an Enterprise agreement at that seat count has only one of these two options left to evaluate. A team that already has the agreement moves on to per-forge behavior, and that is where the differences get concrete, because Azure Repos and Bitbucket Data Center do not offer the API surface that AI reviewers tend to assume they will find.
+
+## The self-hosted floor
+
+CodeRabbit ships the review agent as a container image you run in your own infrastructure, and its [self-hosted overview](https://docs.coderabbit.ai/self-hosted/overview) lists GitHub Enterprise Server, GitLab self-managed, Azure DevOps and Bitbucket Data Center as supported. Code and pull request data stay inside your environment, and prompts plus source code leave it only to reach the LLM provider you configure. For an instance with no inbound access, the [CodeRabbit Reverse Tunnel](https://docs.coderabbit.ai/self-hosted/coderabbit-reverse-tunnel) runs a connector inside your network that dials out over WSS, so CodeRabbit's clone, fetch and comment traffic arrives through an existing outbound session while webhooks keep flowing out through your own NAT. Deployment and configuration instructions go to customers during onboarding rather than being published.
+
+Kodus documents its install path openly. There is a [Helm chart for Kubernetes and OpenShift](https://docs.kodus.io/en/how_to_deploy/deploy_kodus/kubernetes) in the kodus-installer repository, with each data store running bundled as a StatefulSet, as an external service, or as an operator-managed CR, plus a [generic VM install](https://docs.kodus.io/en/how_to_deploy/deploy_kodus/generic_vm) driven by a .env file. Webhooks run on a separate service on port 3332, so the webhook hostname has to be routed independently of the API host, and leaving `WORKER_ROLE` unset crashes the worker on boot, which then makes every webhook event fail with a QueueBind 404 because the queues were never created. Air-gapped installs are covered in the chart README. Kodus runs on BYOK on every plan, reviews are unlimited on every plan, and the one hard cap documented is that it will not review a PR with more than 2,000 changed files.
+
+The practical difference is the shape of a pilot. A self-hosted trial on Kodus Community costs you a cluster and your own model tokens. A self-hosted trial on CodeRabbit costs an Enterprise contract and 500 seats before anything runs. There is more on how the two vendors compare on on-prem deployment generally in [what CodeRabbit and Qodo document for self-hosting](https://mergerequests.dev/blog/self-hosted-ai-code-review-coderabbit-and-qodo-per-their-docs/).
+
+## GitLab self-managed: version floor and how the bot authenticates
+
+CodeRabbit's [self-managed GitLab page](https://docs.coderabbit.ai/platforms/self-hosted-gitlab) sets a version floor at GitLab 16.x and warns that 15.x may show review comments not being posted, or the sign-up flow failing outright. Onboarding is either automated, using an instance admin token to create a dedicated bot user, or manual, where you create that user plus an instance-wide OAuth2 application with the `api`, `read_user`, `email` and `openid` scopes and a callback to `app.coderabbit.ai/login`. IP allowlisting is documented for instances that need it.
+
+Kodus documents two token paths for [GitLab](https://docs.kodus.io/en/how_to_use/code_review/general_config/gitlab_pat). A personal access token posts reviews as the account that owns it, which is the same behavior you get from connecting with OAuth. A group access token posts as a bot user GitLab creates for the token, named after it, with access to every project in the group and its subgroups. The detail worth checking before you plan around it: on GitLab Self-Managed and GitLab Dedicated, group access tokens are available with any license, while on GitLab.com they require Premium or Ultimate and are not available during a trial. A self-managed team can therefore get the separate-bot-identity behavior that a GitLab.com team on a trial cannot.
+
+One GitLab-specific limitation on the Kodus side: the Request Changes toggle is hidden when GitLab is your only connected platform, so blocking behavior there comes from approval rather than a changes-requested review.
+
+## Azure Repos: no reactions, no labels, and what that does to a gate
+
+Both products need elevated access on Azure DevOps, and both document the setup at length. CodeRabbit's [Azure DevOps integration](https://docs.coderabbit.ai/platforms/azure-devops) is admin-only and requires Project Administrator or Project Collection Administrator, with authentication by PAT or by a Microsoft Entra service principal, which is now the default for new organizations. Write operations also need Identity Read (`vso.identity`) so the credential can resolve identities before posting comments or updating pull requests. Client secrets expire, and reviews stop until a new one is supplied.
+
+Kodus documents a PAT scope list for [Azure Repos](https://docs.kodus.io/en/how_to_use/code_review/general_config/azure_devops_pat): Analytics Read, Code Read & Write, Graph Read, Identities and Groups Read, Project and Team Read and User Profile Read. It also names the failure mode that eats the most support time. If the write half of Code Read & Write is missing, Kody can read repositories but cannot post comments, and reviews run silently with nothing surfaced. The Azure-only quirk on the trigger side is that the webhook URL needs a `?token=` signed parameter, which no other forge requires.
+
+Then there is the platform ceiling, which applies to any reviewer. Azure Repos has no reaction API. Kodus states this in its [code review flow](https://docs.kodus.io/en/how_to_use/code_review/flow): native reactions work on GitHub, GitLab and Forgejo, and on Azure DevOps and Bitbucket Kody posts the status emoji as a comment instead, so you see the skipped, error and unlicensed states but not the running and completed pair. A review that never ran and a review that finished cleanly do not look the same way they would on GitLab.
+
+Approval conditions hit the same wall. Kodus's [conditional auto-approve](https://docs.kodus.io/en/how_to_use/code_review/configs/auto_approve) supports label and author filters plus a code-history signal on GitHub and GitLab. On Azure Repos there are no labels and no code history, and the docs state that while labels are configured, every PR is held for a person. A team that copies an approval-label policy from a GitHub setup onto Azure Repos does not end up with a stricter gate, it ends up with a gate that never opens on its own.
+
+If you want a merge gate on Azure Repos that a bot can satisfy, the lever that survives is the branch policy and status check rather than the reviewer's own vote. There is more on how that plays out per tool in [Azure Repos merge gating for AI reviewers](https://mergerequests.dev/blog/azure-repos-merge-gating-for-ai-reviewers-the-status-check-policy/), and the Services versus Server split matters as well, since [the two editions do not carry the same AI review options](https://mergerequests.dev/blog/ai-code-review-on-azure-devops-services-vs-server-per-tool/).
+
+## Bitbucket Data Center: bot user, OAuth consumer, and what the webhook can carry
+
+CodeRabbit's [Bitbucket Data Center guide](https://docs.coderabbit.ai/platforms/bitbucket-data-center) walks through the credentials you need before onboarding: a dedicated bot user with write access to the repositories you want reviewed, an HTTP access token for that user with project read and repository write, and an OAuth consumer with Repository Read, Repository Write and Project Admin that redirects to `app.coderabbit.ai/login`. It publishes an IP allowlist for direct connections and offers the reverse tunnel for private instances. One caveat there is worth reading twice. Bitbucket versions that reject reviewer event subscriptions cannot send reviewer transitions to CodeRabbit, so triage state can go stale even while reviews keep posting normally.
+
+Kodus documents a [Bitbucket PAT](https://docs.kodus.io/en/how_to_use/code_review/general_config/bitbucket_pat) path, and the same conditional-approval limits apply: labels are ignored on Bitbucket and there is no code history, so those conditions drop out of the approval decision rather than holding it. Suggestion copy prompts are also marked unavailable on Bitbucket in the shipped config sample.
+
+Bitbucket Data Center is the forge where the two products look most alike, because both lean on the same primitives: a bot identity, an access token, and an OAuth consumer or webhook to receive events. What is native to the platform and what has to be bolted on is covered in more detail in [what Bitbucket Data Center offers natively for AI review](https://mergerequests.dev/blog/ai-code-review-on-bitbucket-data-center-whats-native-what-isnt/). The gap between the two vendors stays the self-host floor, not the integration.
+
+## Side by side
+
+| | Kodus | CodeRabbit |
+|---|---|---|
+| Self-hosted on a free or entry tier | Yes, Community is free and self-hostable | No, self-hosted is Enterprise only |
+| Self-hosted minimum commitment | None documented | 500 or more user seats |
+| Install instructions published | Yes, Helm charts plus a VM .env guide | Not published; provided during onboarding |
+| Model and key | BYOK on every plan | Bring your own model for the self-hosted agent |
+| GitLab self-managed | OAuth or token; group access token gives a bot identity | GitLab 16.x and above; 15.x may not post comments |
+| Azure Repos authentication | PAT with a documented scope list | PAT or Microsoft Entra service principal, admin-only setup |
+| Bitbucket DC authentication | PAT | Bot user, HTTP access token, OAuth consumer |
+| Status signal on Azure Repos and Bitbucket | Status emoji posted as a comment (no reaction API) | Not stated on the platform integration pages |
+| Label-based approval conditions on Azure Repos | Not available; every PR held for a person | Not stated |
+| Cloud tier price | Teams at $10 per active developer per month, BYOK | [Essentials $24, Team $48, Advanced $72 per user per month](https://www.coderabbit.ai/pricing) |
+
+## Where this lands
+
+If you are on self-managed GitLab, Azure Repos or Bitbucket Data Center and cannot commit to an Enterprise contract at 500 seats, Kodus is the only one of these two you can evaluate without a sales conversation, and the free Community tier is why. That is a real advantage for a pilot, and it comes with the obvious cost: you own the deployment, including the webhook host, the worker role and the databases.
+
+If the organization already has the Enterprise agreement, the floor stops mattering and the per-forge details decide. CodeRabbit's GitLab 16.x requirement is a hard blocker for a team still on 15.x, and the reverse tunnel is the cleaner answer for an instance that cannot accept inbound connections at all. Kodus's published install is easier to try, and easier to get wrong in the same places every self-hosted reviewer gets wrong, which is the webhook path and the worker role.
+
+On Azure Repos, be careful with any claim that a bot approval is gating a merge. Kodus's own docs are explicit that labels cannot drive conditional approval there and every PR ends up held for a person, and the platform has no reaction API for status. CodeRabbit's Azure page covers authentication and permissions rather than review state, so treat status behavior there as something to verify on your own organization before you build a policy on top of it.
+
+Bitbucket Data Center is the closest call of the three. Both vendors need a bot identity and a token, both have a private-network path, and both lose label-driven approval conditions on that forge. If Bitbucket DC is the only forge in scope, pick on the self-host floor and on who operates the deployment, because the integration work is nearly identical.
