@@ -1,0 +1,89 @@
+---
+title: "Kodus vs PR-Agent for self-managed GitLab"
+description: "Kodus vs PR-Agent on gitlab self-managed: licence, self-hosting, deployment model and integration facts side by side, dated and sourced, with the team each fits."
+pubDate: 2026-11-04
+category: "comparison"
+platform: "gitlab"
+tags: ["gitlab", "selfmanaged", "codereview", "ai"]
+---
+
+On a self-managed GitLab instance both Kodus and PR-Agent run inside your own network and both are open source, so licence and hosting do not separate them. The split shows up in how much of the review pipeline you operate yourself, and in which parts of the GitLab API each one depends on.
+
+PR-Agent is the MIT-licensed project Qodo donated to the community. It runs as a CLI, as a job in your `.gitlab-ci.yml`, or as a webhook server you build and host yourself. Kodus is a self-hosted application in the ordinary sense: a web app, an API, a review worker and a separate webhooks service, with PostgreSQL, MongoDB and RabbitMQ behind them.
+
+If you are still deciding whether to run third-party review software at all, GitLab's own two code review features on Self-Managed split by seat rather than by plan, and that decision comes before this one.
+
+## Licence, cost and deployment model
+
+| Fact | Kodus | PR-Agent |
+|---|---|---|
+| Licence | AGPL-3.0 for the repo; files marked `.ee.` or under `ee/` are under the [Kodus Enterprise Code License](https://github.com/kodustech/kodus-ai/blob/main/license_ee.md) | [MIT](https://github.com/The-PR-Agent/pr-agent) |
+| Licence fee | [Community free; Teams $10/active dev/month (cloud only); Enterprise custom](https://docs.kodus.io/en/how_to_use/pricing) | None |
+| Model keys | BYOK on every plan, no token markup | BYOK via LiteLLM: OpenAI, Anthropic, Gemini, Bedrock, Vertex, OpenRouter, local Ollama |
+| Self-hosting | Docker Compose or Helm on Kubernetes 1.28+ / OpenShift 4.14+, [air-gapped installs documented](https://docs.kodus.io/en/how_to_deploy/deploy_kodus/kubernetes) | [Docker image built per target](https://docs.pr-agent.ai/installation/) or a CI job |
+| Deployment shape | Web app, API, review worker, webhooks service; PostgreSQL with pgvector, MongoDB and RabbitMQ | CLI, GitLab CI job, or a gunicorn webhook server |
+| PR volume | Unlimited PRs; [PRs over 2,000 changed files are not reviewed](https://docs.kodus.io/en/how_to_use/pricing) | Not stated |
+| Verified | 2026-10-28 | 2026-10-28 |
+
+The licence difference is mostly about forks. Kodus's Enterprise Code License lets you run the unmodified enterprise files for internal purposes, production included, inside the Community limits, and forbids offering it to third parties as a hosted service. If you intend to modify those files, or to expose a modified Kodus over a network, read that file before you start, because AGPL obligations apply to the rest of the repo. PR-Agent's MIT carries no copyleft and no carve-out, which is part of why it turns up vendored inside internal platforms.
+
+Deployment is where the two diverge in effort. PR-Agent in pipeline mode is one job in `.gitlab-ci.yml` using the prebuilt `pragent/pr-agent` image. The webhook server is a Docker build with target `gitlab_webhook` running under gunicorn, where `GUNICORN_MAX_WORKERS` defaults to 4, importing the application costs roughly 250MB before workers fork, and the docs suggest starting around 1Gi of memory. Version tags are immutable and rolling tags such as `latest` and `gitlab_webhook` are not, so pin a version tag if anything depends on it.
+
+Kodus's install is a stack rather than a container. The Helm chart runs Kubernetes 1.28+ or OpenShift 4.14+, and each of the three data stores can be bundled, external or operator-managed. Two operational details from the deployment docs are easy to miss: `WORKER_ROLE=code-review` must be set on self-hosted because the analytics role is cloud-only, and the webhooks service listens on port 3332 and needs its own public host or a reverse-proxy route, since it serves `/gitlab/webhook` at the root. Leave `API_GITLAB_CODE_MANAGEMENT_WEBHOOK` empty and the app skips webhook registration silently, so repositories connect and reviews never fire.
+
+## GitLab integration details
+
+| Detail | Kodus | PR-Agent |
+|---|---|---|
+| Minimum GitLab version | Not stated | [15.7+, for the merge request `/diffs` endpoint](https://docs.pr-agent.ai/installation/gitlab/) |
+| How work arrives | GitLab webhook, auto-registered, manual fallback | Pipeline job, or webhook server with push, comments and MR triggers |
+| Comment commands | `@kody start-review`, `@kody review --force` | `/review`, `/describe`, `/improve`, `/ask` (webhook server only) |
+| Bot identity | [PAT with `api`, `read_api`, `read_user`, `read_repository`, `write_repository`](https://docs.kodus.io/en/how_to_use/code_review/general_config/gitlab_pat) | GitLab user with Developer role plus a PAT with `api` access |
+| Webhook authentication | [Secret token left blank in the setup steps](https://docs.kodus.io/en/how_to_deploy/platforms/gitlab/gitlab_webhook); URL comes from `API_GITLAB_CODE_MANAGEMENT_WEBHOOK` | Shared secret generated and set as the webhook secret token |
+| Self-signed CA | Not covered for the reviewer-side path | [`gitlab__SSL_VERIFY` affects the API client only](https://docs.pr-agent.ai/usage-guide/custom_ca_and_self_signed_certificates/); LLM and clone need `SSL_CERT_FILE` plus `litellm.disable_aiohttp` |
+| Status feedback | Native emoji reactions on the merge request | Posts review comments; reaction behavior not stated |
+| Verified | 2026-10-28 | 2026-10-28 |
+
+A few of these rows decide real setups.
+
+**Diff collection.** PR-Agent reads the merge request `/diffs` endpoint and does not fall back to the deprecated `/changes` endpoint, which is why the version floor is 15.7. Pagination does not get around GitLab's server-side diff limits, and where GitLab omits a patch (`too_large`, or `collapsed` before GitLab 19.2) PR-Agent diffs the file locally from its two revisions. It raises a provider error if the returned file count disagrees with `changes_count`, retries once if the merge request moves mid-collection, and falls back to a full review rather than mixing revisions.
+
+**Comment events.** Pipeline mode receives no GitLab comment events at all. If reviewers need to type `/review` or `/improve` into a merge request, that requires the webhook server with the Comments trigger enabled. Kodus registers its webhook for Comments and Merge request events, and discards issue events on arrival.
+
+**Identity and roles.** PR-Agent's webhook server needs a GitLab user with the Developer role, because Reporter is enough to post comments but Developer is required for `/describe` to update the merge request description. Kodus's docs walk through a personal access token with the scopes above and suggest an expiry of at least 180 days; sign-in with GitLab is configured as a separate OAuth application with a redirect to `WEB_DOMAIN/api/auth/callback/gitlab`, and on self-managed you point `WEB_GITLAB_OAUTH_URL` at your instance. If you are weighing token types across the forges, the expiry rules differ enough per forge to be worth checking before you hand a bot a credential.
+
+**TLS.** This is the part that costs an afternoon. In PR-Agent, `gitlab__SSL_VERIFY` applies only to the python-gitlab client. LLM calls and `git clone` read `SSL_CERT_FILE` first, then `REQUESTS_CA_BUNDLE`, then `GIT_SSL_CAINFO`, and LLM traffic additionally needs `litellm.disable_aiohttp = true` so LiteLLM uses httpx, which honors `SSL_CERT_FILE`. Disabling verification outright is documented as not recommended, and GitLab already exposes `$CI_SERVER_TLS_CA_FILE` for exactly this case in pipeline mode.
+
+**Version floor in CI.** `$CI_SERVER_FQDN` exists from GitLab 16.10. On an older instance the job has to combine `$CI_SERVER_HOST` and `$CI_SERVER_PORT` instead.
+
+**Status feedback.** Kody replaces a native emoji reaction on the merge request as its state changes, which works on GitLab because the API supports reactions. Azure DevOps and Bitbucket have no reaction API, so Kody posts the status as a comment there.
+
+## Where each one stops on a self-managed instance
+
+PR-Agent's limits come from being a set of commands rather than an application. `/help_docs` has been disabled since v0.36.1 pending a fix for a credential-exposure issue. There is no rule management UI, so team conventions live in a TOML configuration file, and the project documents no learning from review history. Draft merge requests are skipped by default unless `feedback_on_draft_pr` is enabled. Each tool is a single LLM call, so a large diff is handled in one compressed pass.
+
+Kodus's limits are tier and licence limits. A merge request opened by an unlicensed user is not reviewed; it gets a status reaction instead, which makes licence assignment part of the operating loop, and auto-assignment exists for that. Community self-hosted caps at 10 Kody Rules and 3 plugins, and that cap is what decides whether a rules-driven review is usable at your team size. The analytics worker role is cloud-only, so Cockpit metrics are not part of a self-hosted install.
+
+## Which team profile fits each
+
+Neither one wins outright, because they are sized for different teams.
+
+PR-Agent fits a small platform team that is comfortable pinning a version tag, sizing a container and reading a TOML file, wants no licence cost and source it can fork, and only needs review to fire automatically when a merge request opens or receives a push. Pipeline mode plus `ARTIFACT_PATH`, which hands a job artifact such as a test report or SAST output to `/review`, covers a lot of ground without running a service. The moment reviewers need to type commands, the webhook server becomes a second thing to own and the effort gap against Kodus narrows considerably.
+
+Kodus fits a team that wants a reviewer configurable through a UI, with rules scoped to global, repository or directory level, comment commands out of the box, and a metrics story attached. That team accepts a multi-service stack behind it and either stays inside the Community caps or moves to Enterprise.
+
+If the question is which one to run with two engineers and no dedicated platform team, PR-Agent in pipeline mode is the smaller commitment. If the requirement includes comment-driven commands plus rules your team edits without touching a config file, Kodus ships that as a product surface instead of something you assemble from a webhook server and a TOML file. Either way, check three things before committing: your GitLab version against the 15.7 floor, whether the webhook host is reachable from the GitLab instance, and who owns licence assignment if the reviewer you pick meters per author.
+
+## FAQ
+
+**Does PR-Agent need a server on self-managed GitLab?**
+Not if automatic review on merge request creation is enough. Pipeline mode runs the CLI inside a CI job. A server is only required for comment-triggered commands such as `/review` and `/improve`, because pipeline mode does not receive GitLab comment events.
+
+**Can Kodus review merge requests without a webhook?**
+No. Kodus registers a GitLab webhook for Comments and Merge request events, and the manual setup path exists for when automatic registration does not happen. The webhook URL must reach the webhooks service on port 3332, directly or through a reverse-proxy route.
+
+**Which one is easier to run air-gapped?**
+Kodus documents air-gapped installs in its Helm chart, so there is a published path. PR-Agent is a container and a CLI with no external control plane, but the docs do not describe an air-gapped install, so a team has to assemble it from the image and a local model endpoint.
+
+**Do either of these replace GitLab Duo Code Review?**
+They are alternatives to it, not replacements for the seat. GitLab's native features run under the `@GitLabDuo` handle and depend on GitLab Credits or a Duo Enterprise seat, while both tools here are third-party software you operate on your own infrastructure.
