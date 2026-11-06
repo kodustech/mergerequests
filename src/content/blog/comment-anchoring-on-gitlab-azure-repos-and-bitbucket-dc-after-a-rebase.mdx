@@ -1,0 +1,85 @@
+---
+title: "Comment anchoring on GitLab, Azure Repos and Bitbucket DC after a rebase"
+description: "Per-forge comment anchoring on GitLab, Azure Repos and Bitbucket DC, what survives a rebase or force-push, the diff and comment limits, and how Kodus and CodeRabbit behave on multi forge setups."
+pubDate: 2026-11-06
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+---
+
+An inline review comment is stored as coordinates against a specific version of a file. Whether it stays on the line it was written for depends on how the forge resolves those coordinates when the branch moves underneath it. GitLab, Azure Repos and Bitbucket Data Center each answer that differently, and the difference shows up the first time someone force-pushes a rebase onto a pull request that already carries review comments.
+
+## What an inline comment actually points at
+
+A comment on a diff is not attached to a line of text the way a hyperlink is attached to a URL. It is attached to a position: a file path, a side of the diff, a line number, and usually a character offset, recorded against one particular state of the branch. When a new commit changes the file, that position can go stale. Line 42 may still exist but no longer hold the code the comment was about, the file may have been renamed, or the hunk may have shifted into a different part of the diff.
+
+Every forge needs a rule for re-resolving the position, and that rule decides three things a reviewer cares about. Whether the comment stays visible on the line, whether the thread keeps its replies, and whether an unresolved comment can quietly stop being shown at all.
+
+## GitLab: diff comments persist across force-push
+
+GitLab's documentation on [comments and threads](https://docs.gitlab.com/user/discussions/) states directly that comments added to a merge request diff persist when you force-push after a rebase or amend a commit. The anchor is held against the merge request rather than against the commit SHA that was current when the comment was written, so an amended commit does not orphan the discussion.
+
+Two details matter when you go looking for those comments later. A comment left on a commit diff is displayed on the merge request Overview tab and is not shown on the project's Code > Commits page, so the commit view is not where you audit review history. GitLab also caps each object at 5,000 comments, which is generous for human review and less generous once a bot is posting on every push.
+
+GitLab has a native draft flow through Start a review, which holds comments unpublished until you submit them. Review status moves through awaiting review, in progress, approved, and requested changes, and a reviewer can block a merge by requesting changes. That block can be bypassed, and how easily depends on the project settings rather than on the review itself.
+
+## Azure Repos: threads carry explicit iteration and tracking metadata
+
+Azure Repos models position tracking more explicitly than the other two. A pull request is a sequence of iterations, and the [Pull Request Iterations API](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-iterations/list?view=azure-devops-rest-7.1) describes iterations as being created when a pull request is created and when updates are pushed to it. Each thread records a threadContext with the file path and the left and right positions, plus an iterationContext with firstComparingIteration and secondComparingIteration that identifies which diff was on screen when the thread was created.
+
+That metadata exists so the thread can be re-resolved later. Threads also carry tracking criteria, which the [Get Thread reference](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-threads/get?view=azure-devops-rest-7.1) describes as identifying which iteration context the thread has been tracked to, along with detail about the original position and filename. The same endpoint accepts $iteration and $baseIteration parameters that ask the service to track the thread position using a chosen pair of iterations as the two sides of the diff. Files are followed across changes through a changeTrackingId, which is how a rename does not automatically break every comment on the file.
+
+The practical effect is that an Azure Repos pull request has a queryable position history. A tool can ask where a thread sits relative to iteration N instead of guessing from the current diff. It also means the comment budget is not the only limit worth knowing, since the PR summary view skips changes for any file larger than 0.5 MB and the 50 percent rename threshold cannot be changed. The larger limits that bite on big pull requests are covered in [what GitLab, Azure DevOps and Bitbucket hide in large PRs](https://mergerequests.dev/blog/what-gitlab-azure-devops-and-bitbucket-hide-in-large-prs/).
+
+Keep review weight separate from anchoring here. Copilot code review on Azure Repos always leaves a Comment review, so it does not satisfy required-reviewer policies and does not block a merge. That is a policy question rather than a positioning one, but it decides whether the comment you carefully anchored has any gate behind it.
+
+## Bitbucket Data Center: outdated comments are hidden, not removed
+
+Bitbucket Data Center keeps the comment and takes it out of the default view. Its page on [commenting on a pull request](https://confluence.atlassian.com/bitbucketserver/commenting-on-a-pull-request-1027119882.html) documents that when you update a pull request, comments in older diffs or comments that have become outdated due to the update become hidden. A counter at the top of the page opens a dialog with the file activity stream, showing which comments are outdated and why. From there you can reply to, react to, or delete outdated comments.
+
+Resolved threads behave differently again. A resolved comment is marked RESOLVED and collapsed by default, and on a resolved thread you can react but cannot edit or reply. Resolving a comment thread does not complete open tasks attached to it, and a repository administrator can enable a merge check that requires all tasks resolved before the pull request merges. That merge check is the closest thing Bitbucket offers to a gate on review findings, and it is a task-level gate rather than a comment-level one.
+
+Bitbucket has the strongest pending-review story of the three. Comments added during a review are pending and visible only to the reviewer, and the author is notified only when the review is published. Discard review deletes every pending comment and task without publishing, which is worth knowing before you treat a bot's comments as a durable record. Anyone with repository read permission can also convert another user's comment into a task, and a repository administrator can delete other users' comments, so the task list is not a private workspace.
+
+## What the anchor model means for an AI reviewer
+
+The anchor model decides whether an AI reviewer accumulates noise or keeps a usable thread. A reviewer that re-runs on every push and posts fresh comments behaves very differently depending on where those comments land, and how the tool is configured per forge matters as much as the forge itself.
+
+| Behaviour | GitLab | Azure Repos | Bitbucket Data Center |
+|---|---|---|---|
+| Position recorded as | diff position against the merge request | thread context plus iteration context | comment anchor in the diff |
+| Comment after force-push or rebase | persists on the MR diff | re-resolvable via iteration and tracking criteria | hidden in the other comments dialog |
+| Outdated comment visible in the default diff view | yes | depends on the iteration pair requested | no |
+| Documented API to re-resolve position | not stated | yes, $iteration and $baseIteration | not stated |
+| Pending or draft review flow for comments | Start a review | no pending-comment flow documented | Start review and Finish review |
+| Documented comment cap | 5,000 per object | not stated | not stated |
+
+Kodus handles the same three forges, and its config surface exposes how uneven the comment model is across them. The [general review settings](https://docs.kodus.io/en/how_to_use/code_review/configs/general) include a hide-comments option that applies to GitHub only, a suggestion copy-prompt option that is not available on Bitbucket, and a request-changes toggle that is hidden when GitLab is the only connected platform. The cadence control is the part that maps onto anchoring: automatic reviews every push, auto-pause after a burst of pushes (default 3 pushes in 15 minutes), or manual review triggered by a comment. On a rebase-heavy branch, auto-pause is what keeps a reviewer from re-anchoring the same finding three times in an afternoon.
+
+CodeRabbit takes a different route through the same problem. Its [automatic review controls](https://docs.coderabbit.ai/configuration/auto-review) default auto_incremental_review to true, so a push triggers a review of the delta rather than a full re-read, and drafts are skipped by default through the drafts setting. Both defaults reduce comment volume, and both also mean the comment you are looking for may simply not have been posted yet on a draft pull request.
+
+There is a second-order effect worth planning for. On GitLab, Azure DevOps and Bitbucket, CodeRabbit's commit status is a commit status rather than a check run, and skipped or rate-limited reviews report success on it. So a branch rule requiring that status can be satisfied by a review that never ran, which is a different failure from a comment that lost its anchor. Neither problem is visible from the diff view.
+
+## What to check in your own setup
+
+The question to answer first is whether your reviewer re-anchors or re-posts. Re-anchoring means one thread follows the code across pushes, which keeps the conversation readable and keeps a resolved state meaningful. Re-posting means the same finding appears again on the next iteration, and the reviewer's value drops as the thread fills up.
+
+Second, check whether the reviewer respects the native pending flow. On GitLab and Bitbucket, a human can hold comments unpublished until they finish a review. A bot that posts immediately interleaves its comments with an unpublished review, and the author sees the bot's findings before the human's.
+
+Third, decide what happens to a finding that goes stale. On Bitbucket Data Center, an outdated comment moves into the other comments dialog and stops appearing in the diff. If nobody opens that counter, an unresolved review finding disappears from view without being resolved. On Azure Repos, the thread still carries tracking criteria you can query. On GitLab, the comment stays on the merge request diff.
+
+That ordering is the practical takeaway. Azure Repos gives you the most explicit machinery for keeping a comment attached to a moving file, GitLab keeps diff comments visible without extra work, and Bitbucket Data Center asks you to go looking. For a team that rebases constantly and reviews with automation, the forge with queryable thread positions is the one that keeps review history auditable, and the forge that hides outdated comments needs a process for reading the counter. Approval state is a separate moving part on all three, and it resets under different conditions on each, as covered in [approval reset on push](https://mergerequests.dev/blog/approval-reset-on-push-gitlab-azure-repos-and-bitbucket/).
+
+## FAQ
+
+### Do GitLab review comments survive a force-push?
+
+GitLab states that comments added to a merge request diff persist when you force-push after a rebase or amend a commit. The comment stays attached to the merge request diff, and it is shown on the Overview tab rather than on the project's Code > Commits page.
+
+### What happens to outdated comments in Bitbucket Data Center?
+
+They are hidden rather than deleted. When a pull request is updated, comments in older diffs or comments that became outdated are hidden, and a counter at the top of the page opens a dialog showing the file activity stream so you can see which comments are outdated and reply to or delete them.
+
+### Can Azure Repos track a comment thread across pull request iterations?
+
+Yes. Threads carry an iteration context and tracking criteria, and the Get Thread endpoint accepts $iteration and $baseIteration parameters that track the thread position using a chosen pair of iterations as the left and right side of the diff.
