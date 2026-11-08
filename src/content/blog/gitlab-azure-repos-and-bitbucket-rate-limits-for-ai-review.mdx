@@ -1,0 +1,83 @@
+---
+title: "GitLab, Azure Repos and Bitbucket rate limits for AI review"
+description: "multi-forge reference: the rate limits and size caps on GitLab Self-Managed, Azure Repos and Bitbucket DC that throttle a review bot."
+pubDate: 2026-11-08
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+faq:
+  - q: "Are GitLab Self-Managed API rate limits on by default?"
+    a: "No. The user and IP rate limits are disabled by default and must be enabled under Admin > Settings > Network. Some limits are active regardless, including the search rate limit at 30 authenticated requests per minute and the non-configurable blob and file access limit of 5 calls per minute per object for files over 10 MB."
+  - q: "Why would an Azure DevOps API request return HTTP 200 but not run?"
+    a: "Azure DevOps reports consumption-based delays inside a successful response. The delayed response still returns HTTP 200, with Retry-After and X-RateLimit-Delay headers carrying the delay, so a client that only checks for a 2xx status records a request that never completed. Only blocked requests return HTTP 429."
+  - q: "How does Bitbucket Data Center rate limiting behave in a cluster?"
+    a: "Bitbucket DC uses a token bucket per user, and in a clustered instance each user gets a separate bucket on each node. With the default settings of 60 tokens and a refill of 5 per second, a three-node cluster gives each user three buckets, so aggregate headroom is larger while the effective limit depends on which node handles the request."
+  - q: "Do forge rate limits apply to self-hosted AI code review tools?"
+    a: "Yes. A self-hosted reviewer calls the same REST and search endpoints as any other client, so GitLab, Azure DevOps and Bitbucket limits apply to it unchanged. The review tool's own plan limits are separate from the forge's request budget."
+---
+
+An AI reviewer is a heavy API client. It reads a diff, walks to related files for context, posts comments, sets a status, and does it again on the next push. What limits how much of that it can do is the forge's own request budget, and GitLab, Azure DevOps and Bitbucket measure that budget in three different ways.
+
+GitLab Self-Managed leaves most of those limits off until an administrator turns them on, which makes the ceiling a configuration choice. Azure DevOps Services meters consumption against shared resources and can slow a request down while still answering with HTTP 200. Bitbucket Data Center uses a token bucket per user, and on a cluster it hands out one bucket per node. When a review bot starts timing out, posting partial results, or doing nothing at all, one of those three mechanisms is the first place to look.
+
+## The forge API is the reviewer's real ceiling
+
+A reviewer's workload splits into cheap and expensive parts. Reading the diff and posting inline comments is bounded by the number of files. Building context across the repository is bounded by how many search or file requests the forge will accept, and that budget is shared with everything else the same identity does.
+
+That split decides which limit matters. A bot that only reads the diff will rarely hit anything. A bot that tries to understand a change by pulling in related files hits the search and file endpoints, and those are the ones with the lowest ceilings on two of the three forges.
+
+## GitLab Self-Managed: most limits are off until you turn them on
+
+The [user and IP rate limits](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/administration/settings/user_and_ip_rate_limits.md) on a self-managed instance are disabled by default. When an administrator enables them under Admin > Settings > Network, the defaults are 3,600 unauthenticated API requests per hour per IP address, 7,200 authenticated API requests per hour per user, and the same 7,200 per hour for authenticated web requests. An API-specific limit, such as the one for the repository files API, supersedes the general limits for that API.
+
+The limits that are not off by default are the ones that matter for a reviewer. The [search rate limit](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/administration/instance_limits.md) allows 30 authenticated requests per minute and 10 unauthenticated. Cross-file context runs through search, so a bot that reads the repository to understand a change has 30 lookups a minute to spend, shared with every human searching the same instance. A few endpoints are [not configurable at all](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/rate_limits/non_configurable.md): file and blob access is limited to 5 calls per minute per object per project for files over 10 MB, and expanded commit diffs to 6 requests per minute. A bot that opens large generated files hits those before it hits anything else.
+
+Webhook setup has its own small budget, documented in [webhook operations rate limits](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/administration/settings/rate-limit-on-webhook-operations.md): 5 project webhook creations per minute, 10 for group webhooks, 5 for system hooks, and 5 per minute for testing or resending an event. That is separate from the webhook delivery limit, which lives in the plan limits and is disabled by default. Requests over any of these return 429, and the response body is plain text that defaults to Retry later and can be replaced with a message of your own.
+
+There is also a ban path that behaves worse than a rate limit. A [failed authentication ban](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/rate_limits/abuse_bans.md) returns 403 for an hour after 10 failed authentication requests in a minute from one IP address. It is off by default, and once it starts, a valid credential does not clear it, because the ban is checked before the credentials are. If your instance sits behind a load balancer and you enable it, set the nginx trusted proxy addresses first, or Rack Attack will denylist the load balancer and lock out everyone behind it.
+
+## Azure DevOps Services: consumption limits and the HTTP 200 that hides a delay
+
+Azure DevOps does not publish a requests-per-minute number. It meters [resource consumption](https://learn.microsoft.com/en-us/azure/devops/integrate/concepts/rate-limits?view=azure-devops) in Azure DevOps throughput units, and the global limit is 200 TSTU in any sliding five-minute window. A user's requests also get delayed when their personal consumption exceeds 200 times that of a typical user. Delays range from a few milliseconds to 30 seconds and stop within five minutes of consumption dropping.
+
+The part that breaks clients is how a delay is reported. The delayed response still returns HTTP 200, with Retry-After and X-RateLimit-Delay headers carrying the delay. A review bot that treats 2xx as success will record requests that never ran, which is a worse failure than an error, because nothing in the logs looks wrong. Only when requests are blocked does the client get a 429, with a message that names the resource and namespace. Raising the ceiling means assigning the Basic plus Test Plans access level to the identity the bot uses, which is billed for as long as it is assigned.
+
+Azure Repos also enforces size limits that are documented separately in [Git limits](https://learn.microsoft.com/en-us/azure/devops/repos/git/limits?view=azure-devops): repositories should stay under 250 GB, a single push is capped at 5 GB, files at 100 MB, and path length at 32,766 characters with a 4,096 character component limit enforced by a push policy that cannot be overridden. Those caps matter to a reviewer mostly as a signal about repository shape. A monorepo near the recommended ceiling of 10 GB is also a repository where any full-context review is going to be expensive.
+
+Pipelines participate in the same rate limiting, and each pipeline is tracked as its own entity. A build agent, including a self-hosted one, generates consumption by cloning and sending logs.
+
+## Bitbucket Data Center: one token bucket per user, per node
+
+Bitbucket DC's [rate limiting](https://confluence.atlassian.com/spaces/BitbucketServer/pages/976171954/Improving+instance+stability+with+rate+limiting) is a token bucket that targets HTTP requests using basic or bearer authentication, which covers the REST API and Git over HTTP. Git SSH is a separate mechanism. The page is off until a System Admin turns it on, and when it is enabled the defaults are a bucket size of 60 and a refill rate of 5 tokens per second. A client that sends 60 requests in a burst succeeds and then waits while the bucket refills. Over the limit, the client gets HTTP 429, and every such event is recorded in the access log with the label rate-limited.
+
+Two details change how you plan for a bot. Individual users can be given an exemption, either custom bucket settings or unlimited requests, and those exemptions are managed in the UI or through the REST API. In a cluster, each user gets a separate bucket on each node. Three nodes means three buckets at 60 tokens each, so the aggregate headroom is larger than a single-node instance while the effective limit depends on which node a request lands on. System Admins can also disable rate limiting instance-wide through the properties file.
+
+## Rate limits per forge at a glance
+
+| Forge | How the budget is measured | Default state | Threshold that matters | What the client sees |
+|:--|:--|:--|:--|:--|
+| GitLab Self-Managed | Configurable counters per endpoint and per identity | User and IP limits disabled by default; search, blob and webhook limits active | Authenticated API 7,200 per hour per user when enabled; search 30 per minute; blob and file access 5 per minute per object above 10 MB | HTTP 429 with a plain-text body that defaults to Retry later; 403 for one hour after a failed-authentication ban |
+| Azure DevOps Services | Consumption measured in TSTU against shared resources | Always on | 200 TSTU in any sliding five-minute window, plus a delay above 200 times typical usage | A delayed response that still returns HTTP 200 with Retry-After and X-RateLimit-Delay; 429 with TF400733 when blocked |
+| Bitbucket Data Center | Token bucket per user, per node | Off until a System Admin enables it | 60 tokens with a refill of 5 per second by default | HTTP 429, logged as rate-limited in the access log |
+
+## What this means for the reviewer you wire in
+
+The first consequence is about identity. Every one of these budgets is attached to a user, a token, or a service account. A review bot that authenticates as a developer shares that developer's budget, and on GitLab Self-Managed with limits enabled, 7,200 authenticated API requests per hour is not a large number once a few automation jobs use the same account. Give the bot its own identity so its consumption is visible and separable.
+
+The second is about which work you allow it to do. Diff review is cheap. Repository-wide context is the expensive part, and on GitLab it is capped at 30 searches a minute while on Azure Repos it consumes the same shared budget as everything else in the organization. That is why scoping the reviewer to the files that matter is usually cheaper than trying to raise a limit. I wrote about the truncation behavior on large pull requests separately in [what GitLab, Azure DevOps and Bitbucket hide in large PRs](https://mergerequests.dev/blog/what-gitlab-azure-devops-and-bitbucket-hide-in-large-prs/), and the limits here are the other half of the same story.
+
+The third is about failure handling. A 429 with a Retry-After header is a request to slow down, and a client that ignores it and retries in a tight loop will keep itself at the limit. On Azure DevOps there is no 429 at all while requests are only delayed, so the client has to read X-RateLimit-Delay to know that a 200 did not mean completed.
+
+For teams running their own instance, the reviewer options split along how much of this budget they touch. [Self-hosted CodeRabbit and Qodo](https://mergerequests.dev/blog/self-hosted-ai-code-review-coderabbit-and-qodo-per-their-docs/) run against your instance through the same API as any other client, so the ceilings above apply to them unchanged. Kodus takes the same route, and its docs are explicit that [Git-provider-side rate limits may also apply](https://docs.kodus.io/en/how_to_use/pricing.md) even though reviews are unlimited on every plan, with a hard stop at pull requests over 2,000 changed files and a skip when a pull request exceeds the configured file limit. None of these tools can spend a budget the forge will not give them, so the limit you tune is the forge's.
+
+Where the choice does differ is what the reviewer does when it runs out. A tool that retries blindly turns a slow review into a throttled instance for everyone else. A tool that reads the headers, backs off, and reviews fewer files in a bounded time leaves the instance usable. That behavior is worth testing before you enable anything across an organization, because it is much easier to observe on a test project than during a release week.
+
+## What to check before you turn an AI reviewer loose
+
+On GitLab Self-Managed, check whether user and IP limits are enabled and what the search limit is doing under real load, then decide the bot's identity. Watch auth.log for the rate-limited label and for Rack Attack entries if a ban is possible.
+
+On Azure DevOps Services, log Retry-After and X-RateLimit-Delay on every response rather than only on errors, and treat a non-zero delay as a request that did not complete. Assigning Basic plus Test Plans to a dedicated bot identity raises the ceiling if the bot genuinely needs it.
+
+On Bitbucket Data Center, decide whether the bot gets an exemption or lives inside the shared bucket, and remember the per-node multiplication if the instance is clustered. The access log tells you whether the bot is the one being limited.
+
+These limits are configuration rather than constants, and much of that configuration is off by default. The teams that get a review bot running at volume on a self-managed forge are the ones that gave it its own identity and a scope narrow enough to fit inside a budget nobody had to raise.
