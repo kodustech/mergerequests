@@ -1,0 +1,70 @@
+---
+title: "Measuring review time on GitLab, Azure Repos and Bitbucket DC"
+description: "What GitLab, Azure Repos and Bitbucket Data Center actually measure for review time, and why adding an AI reviewer can move the number without changing human latency (multi)"
+pubDate: 2026-11-09
+category: "guide"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+---
+
+There are three forges on this beat and three different answers to the question of how long code review takes, because only one of them computes the number for you. GitLab ships two analytics pages that define review time differently from each other. Azure Repos has no Repos data in Analytics at all. Bitbucket Data Center provides the channel for a metric and leaves the calculation to your CI. If the point of turning on an AI reviewer is to show that review got faster, the first decision is which of those definitions you are going to use, because they disagree, and one of them moves the moment you install the bot.
+
+## GitLab: two analytics pages, two definitions
+
+GitLab is the only one of the three with a review-time number you can open in a browser.
+
+[Code review analytics](https://docs.gitlab.com/user/analytics/code_review_analytics/) shows a table of open merge requests that have at least one non-author comment, and defines review time as the time since the first comment by a non-author. The table holds up to 20 merge requests per page with review time, author, approvers, comments, commits and line changes, and you can filter by milestone and label. It is Premium and Ultimate, on GitLab.com, Self-Managed and Dedicated.
+
+[Merge request analytics](https://docs.gitlab.com/user/analytics/merge_request_analytics/) answers a different question. It reports throughput per month and mean time to merge, defined as the average time between merge request creation and the merge event, excluding closed and not-yet-merged merge requests. Same tiers, same offerings.
+
+Those two numbers will not agree. One is a live counter over open work that starts when someone other than the author comments. The other is an average over completed work measured from creation. Neither one is how long a human waited for a first look, which is usually the thing people mean by review time.
+
+## Azure Repos: Analytics has no Repos data
+
+[Data available from Analytics](https://learn.microsoft.com/en-us/azure/devops/report/powerbi/data-available-in-analytics) lists Repos as None for Azure DevOps Services, Server 2020 and Server 2022, with future availability marked "Under investigation". The OData versions, from v2.0 through v4.0-preview, cover Boards, Test Plans and Pipelines. The [dashboard widget catalog](https://learn.microsoft.com/en-us/azure/devops/report/dashboards/widget-catalog) lists exactly two Repos widgets, Code Tile and Pull Request, and the Pull Request widget shows pull requests for a team rather than computing any duration.
+
+That page also carries its own caveat that the platform table was last updated in August 2022, so "Under investigation" is a long-standing state rather than a roadmap item.
+
+If you want a review-time number on Azure Repos, you build it. The pull request REST object carries creation and closed timestamps and a vote per reviewer, which is enough for time to first vote, time to first approval and time to completion. There is no historical series waiting for you, so you either snapshot on a schedule or reconstruct from the API later. And because that API is versioned per collection, the field you read today is the field you have to keep reading if you want the series to stay comparable.
+
+## Bitbucket Data Center: Code Insights is the channel, not the metric
+
+[Code Insights](https://confluence.atlassian.com/spaces/BITBUCKETSERVER104/pages/1822591226/Code+Insights) is how data reaches a pull request on Bitbucket Data Center. An integration posts a report with a description, a link back to the reporter's URL and up to 6 fields, plus annotations attached to that report. Annotations render on changed lines and only in the unified diff view, not on side-by-side, commit or iterative diffs.
+
+[Checks for merging pull requests](https://confluence.atlassian.com/spaces/BITBUCKETSERVER104/pages/1822591164/Checks+for+merging+pull+requests) can then require a report to be present, to pass or fail, or to carry annotations of a given severity, and an annotation only blocks a merge when it sits on a changed line in the diff. Nothing in the product computes review time. Whatever number you want on the pull request, your CI has to calculate and post it as a report field, and the history lives wherever your CI keeps it.
+
+## Why the GitLab number moves when you add an AI reviewer
+
+GitLab defines review time as the time since the first comment by a non-author, and includes merge requests that have at least one non-author comment. A review bot posting a summary comment is a non-author, and the docs do not carve bot or service-account comments out of either the inclusion rule or the definition.
+
+The consequence is that enabling an AI reviewer tends to push that number up. Before the bot, the counter started when the first human reviewer commented. With the bot, it starts seconds after the merge request opens, so review time drifts toward the age of the merge request itself. Human latency did not change; the dashboard now reports something worse, because the clock starts earlier.
+
+Mean time to merge is not affected, since it only looks at creation and the merge event. That makes it the more stable headline if your reporting has to survive a change in tooling, at the cost of hiding the difference between waiting for a first look and waiting for a final approval.
+
+The docs do not state whether service accounts are excluded from code review analytics, so check on your own instance before quoting the number anywhere. On a self-managed instance you can inspect the data directly, which is the only way to know whether your reviewer's comments are in the sample.
+
+## What to compute if you need a number that holds up
+
+Fix the definition before you turn anything on, and keep it fixed. Pick either time to first human comment or time to merge, and be explicit that they measure different things.
+
+- Exclude bot accounts from the first-comment calculation yourself. On GitLab that means filtering by author, because the analytics page will not do it for you.
+- Use a percentile rather than a mean when a handful of long-running merge requests skew the distribution. Kodus computes its review phase with P75 for that reason, and defines review time as PR opened to PR closed with abandoned pull requests excluded, which sits closer to cycle time than to first-response time.
+- Snapshot the raw data. Azure Repos Analytics will not keep a review-time series and Bitbucket Data Center will not either, so a query you run in three months will not be able to look back.
+- Annotate your own chart when the tooling changes. If the number moved because the clock definition changed, that is worth knowing before someone presents it as an improvement.
+
+| | Review-time metric | Definition | Where it lives | What you still build |
+|---|---|---|---|---|
+| GitLab | Review time per open merge request, plus mean time to merge | Time since first non-author comment; creation to merge | Code review analytics and merge request analytics, Premium and Ultimate, cloud and self-managed | Bot filtering for the first-comment metric |
+| Azure Repos | None for Repos | Not stated | Analytics covers Boards, Test Plans and Pipelines only | REST API snapshots of creation, closed and votes |
+| Bitbucket Data Center | None | Not stated | Code Insights reports, up to 6 fields | CI computes the duration and posts the report field |
+| Kodus | Lead Time Breakdown with coding, pickup and review phases | PR opened to PR closed, P75, abandoned pull requests excluded | Cockpit, paid tier; self-hosted Enterprise also needs the Analytics Worker | Nothing for the metric itself |
+
+The Kodus row is worth reading closely, because it is the only one of the four where the review phase is a first-class metric rather than something you assemble. The trade-off is scope: Cockpit needs a paid tier, and a licensed self-hosted Enterprise deployment needs the Analytics Worker running alongside the code review worker, so an air-gapped instance that only runs the reviewer will not produce the chart. Data refreshes every 30 minutes by default, which is fine for a trend line and not fine if you want to watch a review land.
+
+## Where the number is worth having
+
+The useful split is between a first-look metric and a completion metric. A first-look number tells you whether work is sitting in a queue, which is what most teams mean by review time. A completion number tells you whether work is leaving the system. AI review can plausibly move the second and mostly does not move the first, since a human still has to read the diff. Claiming a drop in review time without saying which of the two you measured is the quickest way to have the number ignored, or to have someone reconstruct it and find the opposite.
+
+There is also a version of this where the metric is the wrong target entirely. If review time is long because a 4,000-line pull request arrives on Friday, the AI reviewer posting faster comments changes nothing about the human read. Measure first, then decide whether the reviewer is the thing to change.
+
+For the settings that change those numbers rather than the measurement itself, the trigger, scope, draft behavior, blocking and re-review levers are in [cutting pull request review time with AI on GitLab, Azure Repos and Bitbucket](https://mergerequests.dev/blog/cutting-pull-request-review-time-with-ai-gitlab-azure-repos-bitbucket/). For the case where the number looks fine and reviewers still complain, the caps that hide parts of a large diff are in [what GitLab, Azure DevOps and Bitbucket hide in large PRs](https://mergerequests.dev/blog/what-gitlab-azure-devops-and-bitbucket-hide-in-large-prs/). On Azure DevOps Server rather than Services, the [per-tool edition split](https://mergerequests.dev/blog/ai-code-review-on-azure-devops-services-vs-server-per-tool/) decides whether a given reviewer exists for you at all, which matters before you invest in building the metric around it.
