@@ -1,0 +1,82 @@
+---
+title: "GitHub Copilot code review: availability and limits by edition"
+description: "Copilot code review availability and the documented gates that stop a review on GitHub.com, GitHub Enterprise Server and Azure Repos (azure-devops)."
+pubDate: 2026-11-11
+category: "reference"
+platform: "azure-devops"
+tags: ["githubcopilot", "codereview", "azurerepos", "githubenterpriseserver"]
+---
+
+Copilot code review behaves differently depending on where it runs. GitHub.com, GitHub Enterprise Server and Azure Repos each expose a different subset of the feature, and the Azure Repos preview carries the tightest documented gates of the three: the pull request has to be active with no merge conflicts, the repository has to be 10 GB or less, and the pull request can touch at most 100 files. Those limits decide whether a review gets produced at all, which matters more than the availability line. If you are choosing between the hosted service and the server edition, the [edition split is the first thing to settle](https://mergerequests.dev/blog/ai-code-review-on-azure-devops-services-vs-server-per-tool/).
+
+## Where Copilot code review is available, by edition
+
+The [Copilot code review overview](https://docs.github.com/en/copilot/concepts/agent-capabilities/agent-powered-workflows-and-operations/code-review) lists the supported clients: GitHub.com, the GitHub CLI, GitHub Mobile, VS Code, Visual Studio, Xcode, JetBrains IDEs, and Azure DevOps in public preview. If your organization supplies Copilot, an administrator has to enable the Copilot code review policy before reviews run on GitHub.com or in GitHub Mobile.
+
+GitHub Enterprise Server is a different story. Per [About GitHub Copilot on GitHub Enterprise Server](https://docs.github.com/en/enterprise-server@3.22/copilot/copilot-on-ghes/about-copilot-on-ghes), Copilot licenses can only be assigned through GitHub.com or GHE.com, and administrative features such as policies and managed settings are configured on those platforms. Copilot features are integrated into the cloud platforms and not into GitHub Enterprise Server. The exception the page names is local bring-your-own-key setups, which do not need a Copilot license. There is a documented air-gapped path, but it lands on Copilot CLI: an administrator configures a model provider for the instance and users connect with their GitHub Enterprise Server credentials. That feature is in technical preview, and it does not post pull request reviews.
+
+For a self-managed GitHub instance, the reviewer that comments on your pull requests comes from somewhere else.
+
+## On Azure Repos, Copilot code review runs on Azure Pipelines
+
+The [Azure Repos page](https://learn.microsoft.com/en-us/azure/devops/repos/git/copilot-code-reviews) is headed Azure DevOps Services and marked public preview. Under the agent pool section it states the constraint plainly: Copilot code review uses an Azure Pipelines agent pool to run code review jobs, defaults to the organization's default pool, requires Azure Pipelines, and self-hosted agent pools and Managed DevOps Pools are not currently supported.
+
+On GitHub.com the compute dependency is configured in the opposite direction. The [runner configuration page](https://docs.github.com/en/copilot/how-tos/copilot-on-github/set-up-copilot/configure-runners) says the agentic capabilities run on GitHub Actions: standard GitHub-hosted runners by default, larger hosted runners if you want the CPU and disk, or self-hosted runners through Actions Runner Controller. ARC is the only supported self-hosting route, runners must be Ubuntu x64 Linux, and the firewall has to allow `api.githubcopilot.com`, `uploads.github.com` and `user-images.githubusercontent.com` on top of the standard self-hosted runner hosts.
+
+The failure behavior differs too, and that is what decides which team gets surprised. If GitHub-hosted runners are disabled in an organization, the agentic capabilities are unavailable and reviews fall back to a more limited review. Reviews still get generated. On Azure Repos the pipeline dependency is part of the feature, so an organization that runs everything on self-hosted agents has no supported path for Copilot code review today. That is the one constraint I would check before anything else on Azure Repos, because it is not something you can work around with configuration.
+
+## The documented gates that stop a review on Azure Repos
+
+Microsoft publishes the requirements and the concurrency limits on the same page, and they are hard gates rather than warnings.
+
+| Requirement | Value |
+| --- | --- |
+| Pull request status | Active |
+| Pull request merge status | No merge conflicts (Merge Succeeded) |
+| Repository size | 10 GB or less |
+| Changed files in the pull request | 100 files or fewer |
+| Number of changes in the pull request | 100 changes or fewer |
+
+| Limit | Value |
+| --- | --- |
+| Duplicate review on the same pull request version | 1 completed review per merge commit |
+| Concurrent reviews per pull request | 1 |
+| Concurrent reviews per organization | 5 |
+| Concurrent reviews per user | 2 |
+
+The 100-file ceiling is the one that will hit real repositories, since it sits well below what the forge itself is willing to render. For a sense of how far apart those numbers are, the [large pull request behavior per forge](https://mergerequests.dev/blog/what-gitlab-azure-devops-and-bitbucket-hide-in-large-prs/) is worth reading next to this table.
+
+Re-reviews are manual on Azure Repos. The page says Copilot does not automatically re-review a pull request when you push new commits, so after each push someone selects Request again next to GitHub Copilot in the Reviewers list. On GitHub.com that behavior is configurable: the [code review configuration page](https://docs.github.com/en/copilot/how-tos/copilot-on-github/set-up-copilot/configure-code-review) lets you turn on Review new pushes and Review draft pull requests in your user settings or through a branch ruleset, and a ruleset's settings cannot be disabled by a user's own preferences. The Azure Repos preview does not document either option, and the organization-level concurrency cap of 5 means a busy repository can queue behind itself.
+
+## What Copilot's review counts for, and what it does not
+
+On Azure Repos, Copilot always leaves a Comment review. It never approves the pull request or requests changes, so its review does not satisfy required-reviewer policies and does not block merging. The effort level is set as a project default with an optional repository override, and a reviewer can pick a different level for a single review without changing either default. The page's screenshots label the levels Low, Medium and High, and the documentation does not publish per-review cost ranges for Azure Repos. It points at the GitHub docs' estimated consumption table instead.
+
+On GitHub.com the same feature can be wired into the merge requirement. Approvals are off by default and configurable at the enterprise, organization and repository levels, and Copilot approvals can count toward a repository's required-approval rule the way a teammate's approval would. File globs limit which pull requests count, up to 15 of them, and pushing new commits dismisses the approval. Effort levels there are named Lite, Balanced and Max.
+
+That difference has a direct consequence for how you configure gating. On Azure Repos the reviewer cannot be the gate, so the gate has to be a branch policy or a status check that you set up separately, which is the shape described in [Azure Repos merge gating for AI reviewers](https://mergerequests.dev/blog/azure-repos-merge-gating-for-ai-reviewers-the-status-check-policy/). On GitHub.com you can make Copilot the required approver and skip the extra check, with the caveat that a push clears the approval and the review has to be re-requested.
+
+## Where the cost lands
+
+GitHub.com bills two components: AI credits for the model interaction, and GitHub Actions minutes for the agentic work. The overview gives typical ranges, and they are wide enough that a rollout estimate should use them as a range rather than a number. Lite averages around $0.25 per review with a $0.05 to $1 range, Balanced around $1.50 with a $0.25 to $5 range, and Max around $10 with a $1.50 to $25 range. Consumption rises with pull request size and with repository custom instructions. Attribution follows the request: automatic reviews bill the pull request author, manual requests bill the person who asked, and bot-authored pull requests bill the organization.
+
+Azure Repos converts tokens into GitHub AI credits at 1 credit to $0.01 USD, charges them to the Azure subscription linked to the organization, and reports them as their own meter in Azure Cost Management under meter category GitHub and subcategory GitHub Copilot for AzDO, with organization and project tags available for filtering. Charges take up to 48 hours to appear after a review completes. Budget alerts notify and do not stop reviews, so a runaway cost has to be caught by someone reading the alert.
+
+The vendor's own advice for sizing is the sensible one: enable the feature for one or two repositories, compare effort levels, and watch daily usage before turning it on for the whole organization.
+
+## What to run when Copilot cannot review the pull request
+
+Azure DevOps Server has no Microsoft-native AI reviewer, and the Azure Repos preview's hard gates rule it out for large pull requests even on the hosted service. The alternatives split by how they reach the instance.
+
+| Tool | How it reaches Azure Repos | Self-hosted option | Constraints |
+| --- | --- | --- | --- |
+| PR-Agent | Pipeline job or self-hosted webhook | Yes, MIT licensed, CLI, Docker, webhook modes | Community-owned; review behavior comes from config files you own |
+| Kodus | Service Hooks subscription to a URL with a signed token query parameter | Yes, Community tier is free and self-hosted with BYOK | Community caps Kody Rules at 10 and plugins at 3; 2,000 changed files per pull request |
+| CodeRabbit | PAT or Microsoft Entra service principal | Not established by the vendor page for Azure DevOps Server | Needs the Service Hooks Edit Subscriptions permission, which the page says cannot currently be granted through the UI and is granted per project |
+| Qodo | Entra app registration plus a service account with Project Administrators | On-premises guide documented | The guide's steps use dev.azure.com and Entra ID, so it does not establish Azure DevOps Server support on its own |
+
+[PR-Agent](https://docs.pr-agent.ai/overview/supported_platforms/) is the default starting point for a Server team because it posts review output to the pull request and the deployment shape is a pipeline job you already know how to run. The [Azure DevOps pipeline setup](https://mergerequests.dev/blog/pr-agent-on-azure-devops-pipelines-branch-policies-webhooks/) is the part that takes the work.
+
+Kodus is worth a look when the blocker is compute rather than the reviewer. It runs self-hosted, and the [Azure Repos integration](https://docs.kodus.io/en/how_to_deploy/platforms/azure_devops/azdevops_webhook) is a Service Hooks subscription whose URL carries an encrypted `token` query parameter built from `CODE_MANAGEMENT_SECRET` and `CODE_MANAGEMENT_WEBHOOK_TOKEN`; unsigned calls get a 403, and you create one subscription per event type across four events. It also needs port 3332 reachable, directly or through a reverse proxy that routes `/.../webhook` paths. The [Community tier](https://docs.kodus.io/en/how_to_use/pricing) is free and self-hosted with bring-your-own-key models, with Kody Rules capped at 10 and plugins at 3; Enterprise adds SSO, RBAC with audit logs, and the [analytics worker](https://docs.kodus.io/en/how_to_deploy/kodus_architecture) behind the metrics dashboards. Every plan stops at 2,000 changed files in a pull request, which is a much higher ceiling than the 100-file gate on Copilot code review.
+
+The decision I would make from all this: if you are on GitHub.com, Copilot code review is the cheapest thing to turn on because it is already in the merge flow and can carry the approval. If you are on Azure DevOps Services and your pull requests regularly exceed 100 files, the preview will not cover your hard cases, and you are better off running a pipeline-based reviewer as the primary and treating Copilot as a supplement on the small ones. If you are on Azure DevOps Server or GitHub Enterprise Server, none of the preview logic applies and the choice is a self-hosted tool you operate.
