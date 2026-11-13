@@ -1,0 +1,79 @@
+---
+title: "AI review compute: GitLab runners, Azure agents, Bitbucket DC builds"
+description: "An AI reviewer is a CI job. What GitLab runners, Azure Pipelines parallel jobs and Bitbucket DC build integration actually give it, and where the queue runs out first (multi)."
+pubDate: 2026-11-13
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "ci"]
+faq:
+  - q: "Does GitLab Code Review Flow need a runner on a self-managed instance?"
+    a: "Yes. It runs as a CI/CD job, so the instance needs a runner tagged gitlab--duo with an executor that supports Docker images, or GitLab hosted runners enabled. Hosted runners are available for GitLab.com and GitLab Dedicated, not for a self-managed instance, and a missing runner produces no comment and no error on the merge request."
+  - q: "Why do AI review jobs wait in Azure Pipelines?"
+    a: "Parallel jobs are configured at the Azure DevOps organization level and shared by every pipeline in every project, so a review job competes with builds and deployments for the same concurrency. The pool consumption report graphs queued and running jobs against your concurrency over 30 days, and it is available on Azure DevOps Services rather than the server edition."
+  - q: "Can Bitbucket Data Center run an AI reviewer on its own?"
+    a: "No. Bitbucket DC has no build agent or concurrency model. It integrates with Bamboo or Jenkins, or accepts build status published through the REST API, so the reviewer runs on that build server's agents. The forge side is the merge check: required builds need a stored, parented build status, and Code Insights annotations only block a merge when they are on the diff."
+---
+
+An AI code reviewer is a CI job on two of the three forges, and the third has no job runner at all. On GitLab the review runs on a runner you tag yourself, on Azure Repos it competes for organization-level parallel jobs, and on Bitbucket Data Center it runs inside whatever build server you already operate. What limits the review in each case is the queue for compute rather than the model behind it.
+
+That distinction is easy to miss because every comparison of AI review tools talks about models, prompts, and findings. The compute side decides whether a review appears at all, and each forge hands you a different control over it.
+
+## On GitLab the reviewer runs on a tagged runner
+
+GitLab's Code Review Flow is explicit about this. Its prerequisites include [configuring your own runners](https://gitlab.com/api/v4/projects/278964/repository/files/doc%2Fuser%2Fduo_agent_platform%2Fflows%2Ffoundational_flows%2Fcode_review%2F_index.md/raw?ref=master) with the `gitlab--duo` tag and an executor that supports Docker images, or turning on GitLab hosted runners for the project. The flow runs as a CI/CD job and requires a runner to execute. Hosted runners are available for GitLab.com and GitLab Dedicated, so a [self-managed instance supplies its own runner](https://gitlab.com/api/v4/projects/278964/repository/files/doc%2Fci%2Frunners%2F_index.md/raw?ref=master).
+
+The failure mode is quiet. If no runner matches the tag, the job does not run, nothing posts on the merge request, and no error appears where a reviewer would look. A merge request with zero comments from a reviewer that never started looks identical to a merge request the reviewer read and had nothing to say about. This is the first thing to check when a self-managed instance produces no Duo reviews, before license seats, model selection, or group settings.
+
+There is also a version and licensing side to this that trips up self-managed rollouts. Code Review Flow went generally available in GitLab 18.8, the agentic flow is available on the Free tier on GitLab.com through GitLab Credits from 18.10, and the approval and change-request behavior sits behind a feature flag in the 19.5 line. The [GitLab self-managed review page](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/) covers which reviewer runs on your instance and how your own rules reach it.
+
+Azure Repos splits differently, because Microsoft's own reviewer does not exist on the server edition. Copilot code review is documented for Azure DevOps Services, and a Server team runs [PR-Agent as a pipeline job](https://mergerequests.dev/blog/pr-agent-on-azure-devops-pipelines-branch-policies-webhooks/) or wires a webhook into Service Hooks. Either way the review consumes the same pipeline capacity as your builds, which brings in the Azure-specific constraint below.
+
+## GitLab concurrency is a number you set on the runner
+
+GitLab's global `concurrent` setting in `config.toml` limits how many jobs run at once across all registered runners, and the per-runner `limit` values can only lower that ceiling. The [GitLab Runner advanced configuration](https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab-runner/repository/files/docs%2Fconfiguration%2Fadvanced-configuration.md/raw?ref=main) is blunt about one value: `0` is forbidden, and the runner process exits with a critical error if you set it.
+
+Two other settings matter for a reviewer that fires on every merge request. `check_interval` defaults to 3 seconds, and `request_concurrency` defaults to 1, which is the number of concurrent job-request connections the runner opens. The docs list a specific warning to watch for in runner logs, `CONFIGURATION: Long polling issues detected`, along with the scenarios that produce it: a `concurrent` value lower than the number of registered runners, or runners sitting at `request_concurrency=1` while GitLab Workhorse holds long polls open (its `apiCiLongPollingDuration` defaults to 50 seconds). The adaptive concurrency flag that is on by default clamps to the configured `request_concurrency` value, so at 1 it changes nothing. The symptom is jobs from some projects starting immediately while others wait out the long-poll window, which on a shared runner pool looks like random review latency.
+
+Adding capacity on GitLab is therefore a hardware decision. You register more runners, raise `concurrent`, and raise `request_concurrency` on the high-volume ones. Nothing is metered and nothing is billed per concurrent job.
+
+## Azure Pipelines parallel jobs are an organization budget
+
+Azure Pipelines charges for concurrency rather than for agents, and the budget lives at the organization level, shared by every pipeline in every project. The [parallel jobs page](https://learn.microsoft.com/en-us/azure/devops/pipelines/licensing/concurrent-jobs?view=azure-devops&accept=text/markdown) lays out the numbers: the Microsoft-hosted free tier for private projects gives one job running up to 60 minutes each time with a monthly ceiling of 1,800 minutes, the paid tier raises the per-job limit to 360 minutes with no monthly cap, and new organizations are capped at 25 Microsoft-hosted parallel jobs unless support raises it. For self-hosted agents you can register as many as you like, but billing counts concurrent jobs, not registered agents, and there are no job time limits.
+
+One detail on that page catches people during a rollout. Buying your first parallel job does not give you two lanes; it only removes the time limits on the one you already had. Concurrency stays at one until a second job is purchased. Microsoft's own rule of thumb is one parallel job for every four to five users, which is a starting point, not a plan.
+
+The consequence for an AI reviewer on Azure Repos is that review jobs sit in the same organization-wide queue as builds and deployments. When the queue is saturated, the review does not fail, it waits, and a reviewer that arrives forty minutes after the last commit is not much use to the person who opened the pull request. The diagnostic tool is the [pool consumption report](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/pool-consumption-report?view=azure-devops&accept=text/markdown), which graphs running jobs, queued jobs, and online agents over 30 days at 10-minute granularity. Its page carries the Azure DevOps Services banner, so it is not available on the server edition, and it requires Project Collection Administrators membership to view. Because of the 10-minute aggregation, running jobs can plot above your concurrency line during bursts of short jobs, so read the queued line rather than the running line when you are looking for a real backlog.
+
+If you gate merges on the reviewer's result, the queue becomes a merge blocker, not just a delay. The [status check policy setup](https://mergerequests.dev/blog/azure-repos-merge-gating-for-ai-reviewers-the-status-check-policy/) is where that trade-off shows up.
+
+## Bitbucket Data Center ships no runner
+
+Bitbucket DC has no build agent and no concurrency model of its own. It integrates with the build server you already run, which in practice means [Bamboo or Jenkins](https://confluence.atlassian.com/spaces/BITBUCKETSERVER104/pages/1822591568/Bamboo+integration), and build status can also be published from any tool through the REST API. The compute question on a Bitbucket DC instance is therefore a question about your build server's agents, plus how much polling and cloning load the instance can absorb.
+
+The merge gate is where the forge does have an opinion. The [merge checks page](https://confluence.atlassian.com/spaces/BITBUCKETSERVER104/pages/1822591164/Checks+for+merging+pull+requests) documents a required builds check that needs Bamboo 7.1 or later, or the Bitbucket Integration Plugin 2.0.0 or later, and it takes build keys rather than tool names: `PROJ-COREBUILDS` for a Bamboo plan, `PROJ/COREBUILDS` for a Jenkins folder path. Before a build key can be selected in the Add builds field, something has to store that status through the build status endpoint with the `Parent` field present in the request body. A reviewer integration that posts comments but never publishes a parented build status will simply not appear in the list of builds you can require.
+
+Code Insights offers the other gate. A Code Insights merge check can require a named report and fail the merge based on annotations, with the limitation that annotations only block a merge when they sit on the diff. An annotation on an unchanged file, or elsewhere in a changed file, does not block anything. An AI reviewer that files findings as insights rather than pull request comments needs to place them on the diff to have any gate effect.
+
+Load is the second half of the Bitbucket DC picture. Atlassian's own [scaling page for CI performance](https://confluence.atlassian.com/spaces/BITBUCKETSERVER104/pages/1822592031/Scaling+Bitbucket+Data+Centre+for+Continuous+Integration+performance) describes what repetitive CI traffic does to the instance: polling for changes returns the same answer most of the time, and each triggered build can fan out into several identical clones. The SCM Cache Plugin exists for that, configurable through its REST endpoints or `bitbucket.properties`, and it disables itself when free disk drops below a configured minimum. One caveat in the same page is easy to overlook when you have a mixed client fleet: Git wire protocol v1 and v2 caches are not interchangeable, so a mix of clients lowers cache efficiency and raises disk usage.
+
+## Where the reviewer's own compute sits
+
+A self-hosted reviewer that is not a forge pipeline job replaces the runner question with an operational one. PR-Agent runs either as a pipeline job or behind a webhook, so on a Bitbucket DC instance it still borrows your build server. Kodus runs as its own container stack against your LLM provider or your own API key, which removes the dependency on a forge runner entirely and adds its own failure modes: the worker needs `WORKER_ROLE` set or it crashes on boot, and because that worker creates the job queues on first connect, an unset role leaves the API and webhook services failing every event with a `QueueBind 404`. RabbitMQ is required for the 2.0 stack, and webhooks are served by a separate process on its own port, so the webhook URL has to route there rather than to the API. The [deployment page](https://docs.kodus.io/en/how_to_deploy/deploy_kodus/generic_vm.md) documents all of it, and the [architecture page](https://docs.kodus.io/en/how_to_deploy/kodus_architecture.md) notes that the analytics worker runs locally on a licensed self-hosted Enterprise install.
+
+That trade is worth stating plainly: you trade a runner tag and a licensing path for a container stack you own, with a queue and a worker role to keep healthy.
+
+| Route | What executes the review | Capacity control | Symptom when capacity runs out |
+|---|---|---|---|
+| GitLab Code Review Flow (Self-Managed) | CI/CD job on a runner tagged `gitlab--duo` with a Docker-capable executor | `concurrent`, per-runner `limit`, `request_concurrency` on your own runners | No job runs, no comment, no error on the merge request |
+| GitLab hosted runners | GitLab-managed runners, GitLab.com and Dedicated only | Not configurable by you | Not applicable on Self-Managed |
+| Azure Repos, Copilot code review or PR-Agent in a pipeline | Pipeline job on Microsoft-hosted or self-hosted agents | Organization-level parallel jobs, shared with all builds | Review waits in the same queue as builds and deployments |
+| Bitbucket DC, reviewer behind a build | Bamboo, Jenkins, or another build server posting status | Your build server's agent pool | No build status stored under the required key, so no merge check to attach |
+| Kodus self-hosted | Its own containers, worker role, RabbitMQ, your LLM key | Worker concurrency and your LLM provider's limits | Worker crash or `QueueBind 404` if `WORKER_ROLE` is unset |
+
+## What to measure before you buy capacity
+
+The practical ordering is to measure queue time and drop time separately. A review that starts 30 seconds after the last push and finishes in two minutes is healthy. A review that starts 20 minutes after the push has a capacity problem, and no amount of prompt tuning will fix it. On GitLab that means runner log lines and the long-poll warning; on Azure Repos it means the queued line in the pool consumption report; on Bitbucket DC it means build queue depth on the Bamboo or Jenkins side, which the forge never sees.
+
+There is a second reason to watch this closely now. Review jobs scale with the number of merge requests and commits, and agent-authored changes tend to arrive in more commits per pull request than human ones. If you have already tuned review volume per forge, the [per-forge volume ceilings](https://mergerequests.dev/blog/reviewing-ai-generated-code-at-volume-the-ceilings-per-forge/) cover the quota side, and the [rate limits page](https://mergerequests.dev/blog/gitlab-azure-repos-and-bitbucket-rate-limits-for-ai-review/) covers the API side. Compute is the third budget, and on GitLab and Bitbucket DC it is the one you pay for in hardware rather than in license terms.
+
+The judgment I would attach to all of this: on GitLab, capacity is a self-managed advantage, because you can add runners and raise `concurrent` without asking anyone. On Azure Repos it is the opposite, since parallel jobs are an organization purchase shared with every build in the org, and a reviewer that gates merges turns a queue into a blocked pull request. On Bitbucket DC the forge gives you no concurrency concept at all, so the reviewer's real budget is whatever your Bamboo or Jenkins agents have left after the builds. Teams that plan the compute side before the review side spend less time explaining why the reviewer did not comment.
