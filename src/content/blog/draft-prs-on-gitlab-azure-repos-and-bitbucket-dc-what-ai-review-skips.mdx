@@ -1,0 +1,89 @@
+---
+title: "Draft PRs on GitLab, Azure Repos and Bitbucket DC: what AI review skips"
+description: "How draft state changes the review rules on GitLab, Azure Repos and Bitbucket Data Center, why no forge emits a clean ready-for-review event, and what an AI reviewer does with a draft by default (multi)"
+pubDate: 2026-11-15
+category: "reference"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "codereview"]
+---
+
+A pull request can be a draft, carry a green pipeline, hold a reviewer's approval, and still be unmergeable. On GitLab, Azure Repos and Bitbucket Data Center the draft flag does one more thing than that: it changes which of the forge's own rules get evaluated, and whether an automated reviewer runs at all. The second part is the one that costs a team time, because a skipped review looks the same as a review that found nothing.
+
+None of the three forges documents a dedicated ready-for-review event. The transition from draft to ready arrives inside a general update payload, or does not arrive as an event at all, so a bot wired to webhooks has to read the state change out of a field rather than wait for a signal. That is the mechanism behind the most common version of this problem: the reviewer skips the draft, the author marks it ready, and nothing runs because marking a pull request ready is not a commit.
+
+## What draft mode changes on each forge
+
+GitLab blocks the merge outright. A merge request marked Draft cannot merge until the flag is removed, even when it satisfies every other merge criterion, and auto-merge lists "the merge request is not a Draft" among its merge checks. The ways to set the flag are broader than the UI suggests. You can use the button, a `/draft` quick action, a title prefix of `[Draft]`, `Draft:` or `(Draft)`, or a commit message on the source branch starting with `draft:`, `Draft:`, `fixup!` or `Fixup!`. That last route is not a toggle, and the [draft merge requests page](https://gitlab.com/api/v4/projects/278964/repository/files/doc%2Fuser%2Fproject%2Fmerge_requests%2Fdrafts.md/raw?ref=master) says plainly that adding the text again in a later commit does not mark the merge request ready. So a merge request can enter draft state because someone wrote `fixup!` in a commit subject, with no UI action and no intent to hide the change.
+
+Azure Repos changes more. A draft pull request does not run build validation policies automatically, voting is disabled, and required reviewers are not added. Notifications go only to reviewers explicitly added to the draft. Publishing it is what assigns the required reviewers, evaluates the policies, and starts voting, per the [pull request documentation](https://learn.microsoft.com/en-us/azure/devops/repos/git/pull-requests?view=azure-devops). The draft flag itself is `isDraft` on the pull request object in the [REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/create?view=azure-devops-rest-7.1), and `az repos pr create --draft true` is documented at Azure DevOps Server 2020 and later.
+
+Bitbucket Data Center sits between the two. A draft cannot be merged manually or automatically until it is marked ready, but reviewers can still approve or request changes on it, and the [draft pull requests page](https://confluence.atlassian.com/rest/api/content/1822591057?expand=body.storage) states those reviewer statuses survive the transition to ready. Bamboo builds trigger for draft pull requests exactly as they do for regular ones, which is worth knowing before you use draft state as a way to save CI minutes.
+
+| Forge and edition | Draft blocks merge | Other rules changed while draft | Reviewer status |
+|---|---|---|---|
+| GitLab (all offerings) | Yes, regardless of other criteria | None documented for approvals; pipelines run as normal | Approvals still allowed, subject to approval settings |
+| Azure Repos (Services and Server) | Yes | Build validation does not run, voting disabled, required reviewers not added | Marking a published PR as draft removes all votes |
+| Bitbucket Data Center | Yes, manual and auto-merge | None documented | Approvals and change requests are kept when marked ready |
+| Bitbucket Cloud | Yes | None documented | Reviewers added to a draft are not notified until it is ready |
+
+That last row is a genuine divergence inside one product family. Bitbucket Cloud says reviewers added to a draft are not notified until it is marked ready, while the Data Center page says added reviewers do receive a notification about the draft pull request.
+
+## The ready-for-review transition has no event on any of the three
+
+GitLab comes closest. The merge request event fires on creation, update, approval, unapproval, merge, close, re-requested review, added commits, and resolved threads. Marking a merge request ready is an `update`, and the [webhook events page](https://gitlab.com/api/v4/projects/278964/repository/files/doc%2Fuser%2Fproject%2Fintegrations%2Fwebhook_events.md/raw?ref=master) tells receivers to inspect the `changes` field for the actual change. `draft` is one of the documented attributes that can appear there, and `object_attributes.draft` is a boolean on every payload. So on GitLab you can detect the transition, but only by diffing a field that is usually unchanged. The same page also notes that the payload can have an empty `changes` field, which is a hint that treating `changes` as the sole trigger is fragile.
+
+Azure Repos has no draft-specific service hook. The documented PR events are `git.pullrequest.created`, `git.pullrequest.merged` and `git.pullrequest.updated`, and the [service hook events reference](https://learn.microsoft.com/en-us/azure/devops/service-hooks/events?view=azure-devops) lists four `notificationType` values for the update event: `PushNotification`, `ReviewersUpdateNotification`, `StatusUpdateNotification` and `ReviewerVoteNotification`. There is no draft value in that list, and the page carries no draft field in its payload documentation. The state is in the resource the event carries, since the pull request object has `isDraft`, so a receiver has to poll the resource rather than filter on the event. Whether publishing a draft emits an update with a distinguishable payload is not stated in the event reference.
+
+Bitbucket Data Center documents that you track draft pull requests through the updated event, and the [Manage webhooks page](https://confluence.atlassian.com/rest/api/content/1822591261?expand=body.storage) lists the pull request events in full: Opened, Source branch updated, Modified, Reviewers updated, Approved, Unapproved, Changes requested, Merged, Declined, Deleted, Comment added, Comment edited, Comment deleted. Nothing in that list is specific to drafts, and the documented URL variables for pull request events cover only the source and target branch names, so there is no draft filter you can apply at the webhook level.
+
+The practical result is the same on all three. A reviewer whose trigger is "new commit pushed" or "pull request opened" has no reason to fire when the flag flips. That is a design gap in the event contract, not a bug in the reviewer.
+
+## What the reviewers do with a draft by default
+
+The default differs per tool and, in one case, per forge inside the same tool.
+
+Kodus ships `runOnDraft: true` in the sample configuration on its [general settings page](https://docs.kodus.io/en/how_to_use/code_review/configs/general.md), so a draft gets reviewed unless you turn it off, and the [review flow page](https://docs.kodus.io/en/how_to_use/code_review/flow.md) lists draft mode as a skip condition that produces the 👀 status reaction instead of a review. Forcing a pass after a skip is `@kody review --force`. One detail matters if you plan to set this in a config file: the file is ignored until `kodusConfigFileOverridesWebPreferences` is enabled at repository or directory scope, so committing `runOnDraft: false` and seeing drafts reviewed anyway is the documented opt-in, not a malfunction.
+
+CodeRabbit defaults the other way. `reviews.auto_review.drafts` is `false`, and the [automatic review controls page](https://docs.coderabbit.ai/configuration/auto-review) documents label-based opt-in that still works with `enabled: false`, which means a positive label such as `review-ready` will pull a draft into review if the label is present. `ignore_title_keywords` is described as the lightest way to signal that a pull request is not ready.
+
+PR-Agent is the awkward one, because the behavior is not the same on every provider. Its [usage and automation documentation](https://raw.githubusercontent.com/qodo-ai/pr-agent/main/docs/docs/usage-guide/automations_and_usage.md) states that the GitHub App does not consider draft pull requests for automatic tools unless `feedback_on_draft_pr` is `true`, the GitLab webhook also skips draft merge requests by default, and Azure DevOps and Bitbucket apply no draft check at all. The same section documents that marking a pull request ready does not run `pr_commands` a second time. A team running PR-Agent on GitLab and Azure Repos therefore has two different draft behaviors from one deployment, and on Azure Repos the bot will review a draft whose policies have not been evaluated yet.
+
+| Tool | Reviews drafts by default | Lever | Documented behavior on ready |
+|---|---|---|---|
+| Kodus | Yes (`runOnDraft: true`) | Turn off in settings or `kodus-config.yml` after enabling the file override | Not stated; `@kody review --force` overrides a skip |
+| CodeRabbit | No (`drafts: false`) | `reviews.auto_review.drafts: true`, or a positive label | Not stated |
+| PR-Agent | No on GitHub and GitLab; no draft check on Azure DevOps and Bitbucket | `feedback_on_draft_pr` | Marking ready does not re-run `pr_commands` |
+
+## Azure Repos is the forge where a draft changes what runs
+
+On Azure Repos, draft state is not only a signal to your reviewer, it is a switch on the platform's own automation. Build validation policies do not run automatically while the pull request is a draft, which means a reviewer implemented as a pipeline task on a build validation policy will not execute at all, no matter how it is configured on its own side. You can queue a build validation manually from the pull request's more options menu, and publishing the pull request is what evaluates the policies and starts voting.
+
+There is a second trap on the same forge. Marking a published pull request as draft removes all existing votes, which the [complete pull requests page](https://learn.microsoft.com/en-us/azure/devops/repos/git/complete-pull-requests?view=azure-devops) documents as part of the Complete dropdown behavior. That is a different outcome from GitLab and Bitbucket Data Center, where reviewer status survives the round trip. It also interacts with the reset rules that already exist on the minimum reviewer policy, which I covered in the [approval reset comparison](https://mergerequests.dev/blog/approval-reset-on-push-gitlab-azure-repos-and-bitbucket/): a team that parks a pull request back in draft to do cleanup loses the approvals it collected, and an AI reviewer that had already approved has nothing to preserve.
+
+The ordering consequence is what I would flag to a team: on Azure Repos, anything that runs through a branch policy is downstream of publishing, and anything the bot does while the pull request is a draft is advisory in the literal sense, because it cannot gate a merge that the platform is not evaluating.
+
+## GitLab drafts run pipelines, and that cuts both ways
+
+GitLab does not skip CI for drafts. The draft page says draft merge requests run the same pipelines as ready ones, and skipping them is a choice you make in `workflow:rules` with the `CI_MERGE_REQUEST_DRAFT` variable, available from GitLab 17.10, per the [`workflow` keyword documentation](https://gitlab.com/api/v4/projects/278964/repository/files/doc%2Fci%2Fyaml%2Fworkflow.md/raw?ref=master). Older instances use `CI_MERGE_REQUEST_TITLE` with a regular expression instead.
+
+That choice has a documented failure mode. If a project has Pipelines must succeed enabled and the workflow rules prevent a merge request pipeline from being created, the merge request sits on Checking pipeline status and never resolves, because the required pipeline can never appear. Teams that add a draft-skip rule to save runner minutes and also require a successful pipeline end up with an unmergeable merge request, and the symptom points at CI rather than at the draft rule that caused it. The same failure shape shows up in the broader set of [limits that decide how much of a pull request anyone actually reads](https://mergerequests.dev/blog/what-gitlab-azure-devops-and-bitbucket-hide-in-large-prs/), where a setting on one side quietly disables behavior on another.
+
+For an AI reviewer on self-managed GitLab, the implication is that a draft review is often already running, because the pipeline runs. What stops the review is the reviewer's own configuration, not the forge.
+
+## Bitbucket Data Center: no draft event, and auto-merge that cannot fire
+
+The Data Center webhook contract gives you the least to work with. The event list has no draft entry and the pull request URL variables expose branch names only, so the way to detect a draft is to read the pull request payload on the updated event. The documented guidance points you at that event for tracking draft pull requests, without naming a field to filter on.
+
+Auto-merge is worth understanding alongside this. From Bitbucket 8.15 the merge button carries a clock icon when merge checks are still pending, and the system merges on behalf of the user who requested it once those checks pass, per the [merge a pull request page](https://confluence.atlassian.com/rest/api/content/1822591138?expand=body.storage). The documented reasons Bitbucket cancels an auto-merge include new code changes, a changed target branch, timed-out merge checks, and a pull request that could not be merged within two weeks, which is the default and is configurable by an administrator. A draft is not eligible for merging either way, so auto-merge cannot complete while the flag is on, and the cancellation list does not state whether marking a pull request as draft cancels a pending auto-merge. If your workflow relies on that, test it on your instance rather than assuming.
+
+## What to configure so the review still happens
+
+The configuration that avoids the skip-then-silence pattern depends on which side owns the decision.
+
+If the reviewer has a draft setting, decide it explicitly and put it in version control. Kodus and CodeRabbit both take a value for it, and CodeRabbit's label opt-in gives you a way to keep automatic reviews off while letting a label pull a specific pull request in. On GitLab, remember that the config file for Kodus does nothing until the file override is enabled.
+
+If the reviewer is driven by a pipeline, treat publishing as the trigger rather than opening. On Azure Repos, publishing a draft is what evaluates policies and starts voting, so a branch-policy-driven reviewer sees the pull request at the right moment without any extra work. On GitLab, the pipeline already runs for drafts, so gate the review job on `CI_MERGE_REQUEST_DRAFT` being false rather than letting it run and then wondering why the comments stopped.
+
+If you are wiring a webhook receiver, plan for the transition explicitly. On GitLab, compare `object_attributes.draft` between payloads instead of trusting `changes`, since the docs warn that `changes` can be empty. On Azure Repos, read `isDraft` from the pull request resource on `git.pullrequest.updated`, because no notification type covers it. On Bitbucket Data Center, read the pull request on the updated event and accept that you are inferring the transition from state rather than from an event.
+
+The judgment I would make: draft state deserves a line in the review runbook, next to the file limits and the rate limits. It is the one pull request state where the forge's own evaluation changes, where the reviewer's default differs by tool and by forge, and where the transition to ready produces no signal that a push-based trigger will notice. The teams that get bitten are not the ones that reviewed a draft they did not mean to review. They are the ones whose reviewer went quiet and whose pull request merged on that silence.
