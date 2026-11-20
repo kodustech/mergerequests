@@ -1,0 +1,86 @@
+---
+title: "Greptile alternatives on GitLab, Azure Repos and Bitbucket DC"
+description: "Greptile's forge coverage by edition, and which AI code review alternatives connect to self-managed GitLab, Bitbucket DC and Azure Repos (multi)."
+pubDate: 2026-11-20
+category: "comparison"
+platform: "multi"
+tags: ["gitlab", "azuredevops", "bitbucket", "greptile"]
+faq:
+  - q: "Does Greptile support Azure DevOps?"
+    a: "Not per its own documentation. Azure DevOps is absent from Greptile's cloud provider table, absent from the Enterprise-gated rows, and absent from the self-hosting code host list, which names GitHub, GitHub Enterprise Server and GitLab. There is no documented Greptile connection path for Azure Repos."
+  - q: "Can Greptile review pull requests on self-managed GitLab or Bitbucket Data Center?"
+    a: "Yes, on Greptile Enterprise. GitLab Self-Managed and Bitbucket Data Center both require Enterprise access with a contact-sales step. The instance must be reachable from Greptile and able to send events to Greptile, so a private-network forge needs network work beyond the token."
+  - q: "Does Greptile self-hosting remove the plan gate on self-managed forges?"
+    a: "No. Greptile documents hosting your code provider and hosting Greptile as separate choices, and the self-hosting requirements list GitHub, GitHub Enterprise Server and GitLab only. Bitbucket Data Center and Azure DevOps are not in that list. Self-hosted Greptile also runs on an annual contract with no free trial."
+  - q: "What does Greptile need to connect to Bitbucket Data Center?"
+    a: "A dedicated bot account with admin access to each project, and a user HTTP access token with Project admin and Repository write permissions. Greptile's docs note that Project write alone is not enough for the project webhook it creates when linking a project."
+---
+
+Greptile reviews pull requests on GitLab and Bitbucket, but only its Enterprise tier reaches the self-managed editions, and Azure Repos does not appear in its provider table at all. That decides most of the evaluation before anyone compares review quality. A team on Azure DevOps has no documented Greptile path, hosted or on-premises, and a team on self-managed GitLab or Bitbucket Data Center has to sign an Enterprise agreement before anything runs. For everyone else the question narrows to which reviewer has a connection path for your forge edition, and what that path requires.
+
+## What Greptile covers, by edition
+
+The [code providers table](https://www.greptile.com/docs/integrations/code-providers.md) splits cleanly by plan. GitHub Cloud through the GitHub App, GitLab.com through an access token and webhook, Bitbucket Cloud through a Forge app, and Cursor Origin in beta are available on every plan. GitHub Enterprise Server, GitHub Enterprise Cloud with data residency, GitLab Self-Managed, Bitbucket Data Center and Gitea sit behind Greptile Enterprise, each with a contact-sales step. Perforce is a separate case: it works through P4 Code Review in on-premises deployments and is not a cloud connection.
+
+| Provider | Connection | Availability |
+| - | - | - |
+| GitHub Cloud | GitHub App | All plans |
+| GitLab.com | Access token and webhook | All plans |
+| Bitbucket Cloud | Forge app | All plans |
+| Cursor Origin (beta) | Origin App | All plans |
+| GitHub Enterprise Server | Your instance | Greptile Enterprise, sales-gated |
+| GitLab Self-Managed | Access token and webhook | Greptile Enterprise, sales-gated |
+| Bitbucket Data Center | Bot user token and webhook | Greptile Enterprise, sales-gated |
+| Gitea | Bot user token and webhook | Greptile Enterprise, sales-gated |
+| Perforce (P4) | P4 Code Review | On-premises Greptile only |
+| Azure DevOps | Not listed | Not stated |
+
+Two details in that table matter more than the coverage list itself. A self-managed connection needs Greptile to reach your instance and your instance to reach Greptile, so a forge that is not publicly reachable needs network work in both directions before the token matters. The Bitbucket Data Center setup wants a dedicated bot account with admin access to each project, and the token has to be a user HTTP access token with Project admin and Repository write permissions. Greptile's page notes that Project write alone is not enough for the project webhook it creates while linking a project. Permission details like that surface during setup rather than during evaluation, which is the argument for reading them before you commit rather than after.
+
+Review depth is metered separately from forge coverage. [Review tiers](https://www.greptile.com/docs/code-review/review-tiers.md) run Base at 1 credit, Plus at 3, and Apex at 10, with an Auto mode that picks per pull request from size and complexity. Tier rules raise the tier for the pull requests they match, and a request in the trigger comment can raise it further but cannot lower it.
+
+## Azure Repos is absent from Greptile's provider table
+
+Azure DevOps does not appear in the cloud provider rows, it does not appear in the Enterprise-gated rows, and it does not appear in the [self-hosting requirements](https://www.greptile.com/docs/self-hosting/self-hosted-greptile.md) either, where the code host list names GitHub, GitHub Enterprise Server and GitLab. The absence repeats across three separate pages, which is the part worth trusting: this reads as no support rather than a row someone forgot to add.
+
+The consequence is direct. If your repositories are on Azure Repos and you want a reviewer that connects to the forge, Greptile is not a candidate, and self-hosting Greptile does not change that, because hosting the reviewer and hosting the code provider are documented as separate choices. If your code is on self-managed GitLab or Bitbucket Data Center, Greptile is a candidate as long as an Enterprise contract is realistic. How the tools that do connect to Azure Repos divide by edition is covered in [the edition coverage comparison for self-managed forges](https://mergerequests.dev/blog/ai-code-review-tools-on-self-managed-gitlab-azure-repos-and-bitbucket/).
+
+## Self-hosting Greptile does not remove the plan gate
+
+Greptile's [deployment options](https://www.greptile.com/docs/self-hosting/deployment-options.md) start by separating the two decisions explicitly: hosting your code provider and hosting Greptile are separate choices, and review credits plus plan limits still apply to a self-hosted deployment. That sentence matters because self-hosting is often read as a way around an edition gate. It is not.
+
+The documented shape of a self-hosted install is a Docker Compose deployment on a single Linux VM, sized from 4 cores and 16 GB for five to ten developers up to 32 cores and 128 GB at a hundred, or a Kubernetes deployment with Helm charts for larger teams. PostgreSQL with pgvector and Redis are customer-provisioned rather than bundled, so you own database operations. Inbound access on port 3007 has to be open for SCM webhooks. The deployment requires a reasoning model for review work plus a fast model and an embeddings model for indexing, and those come from OpenAI, Anthropic, AWS Bedrock, Azure OpenAI or Google Vertex AI.
+
+Air-gapped environments are documented as supported, and any OpenAI-compatible API can serve the models, which is the part that makes a disconnected install possible in principle. Two practical constraints sit next to that. Container images come from Greptile's registry with credentials you request from the vendor, and [self-hosted Greptile](https://www.greptile.com/docs/self-hosting/self-hosted-greptile.md) is sold as an annual contract with no free trial, a full refund window in the first 30 days, and pro-rated refunds for months two through four on upfront payments. A team that wants to stand something up on a VM and evaluate it this week is not the buyer that model is built for.
+
+## What connects to each forge instead
+
+The alternatives sort by which forge editions they reach and what the connection requires, using the same criteria that put Greptile out of reach for Azure Repos.
+
+CodeRabbit's [platform overview](https://docs.coderabbit.ai/platforms/overview.md) covers GitHub, GitLab, Azure DevOps, Bitbucket Cloud and Bitbucket Data Center, with self-hosting reserved for Enterprise customers at 500 or more user seats. On [Bitbucket Data Center](https://docs.coderabbit.ai/platforms/bitbucket-data-center.md) it needs a bot user, an HTTP access token with project read and repository write, and an OAuth consumer granted Repository Read, Repository Write and Project Admin. The network requirement runs the other way from Greptile's: Bitbucket has to send outbound HTTPS webhooks to CodeRabbit's cloud, and self-hosted deployments keep `BITBUCKET_SERVER_WEBHOOK_SECRET` aligned with the secret in CodeRabbit. On a locked-down instance that outbound requirement is the gate, and the 500-seat floor is the one that decides whether the conversation continues. The [Kodus and CodeRabbit comparison on self-managed forges](https://mergerequests.dev/blog/kodus-vs-coderabbit-on-self-managed-gitlab-azure-repos-and-bitbucket-dc/) covers where that floor lands in a budget discussion.
+
+Qodo's [deployment model matrix](https://docs.qodo.ai/install-qodo/deployment-model-support) marks GitLab Self-Managed and Bitbucket Data Center as available across multi-tenant, single-tenant, on-premises and air-gapped. Azure DevOps Cloud shows on-premises as unavailable and air-gapped as not applicable, and there is no Azure DevOps Server row at all. Its on-premises Azure DevOps install guide names Azure DevOps Server in its network prerequisites, which does not match the matrix. That contradiction is worth resolving against your own environment rather than from the docs, because the two pages disagree.
+
+PR-Agent is the open-source route and the [README](https://raw.githubusercontent.com/qodo-ai/pr-agent/main/README.md) is direct about its status as a community-maintained legacy project that Qodo donated, now living in its own GitHub org. It covers GitHub, GitLab, Bitbucket, Azure DevOps and Gitea, and runs as a CLI, a Docker container, a GitHub Action or behind a webhook, which is what makes it the practical option for an Azure DevOps Server team. Two upgrade details matter: releases from 0.34.2 publish under a new Docker Hub namespace while older tags stay frozen in the old one, so pinned image references need updating, and `/help_docs` is disabled from v0.36.1 pending a fix for a credential-exposure issue.
+
+Kodus reviews GitHub, GitLab, Bitbucket, Azure DevOps and Forgejo, with a free Community tier that runs self-hosted or in the cloud on your own model key and documents its caps rather than gating them behind a contract: 10 Kody Rules and 3 plugins on Community, and no pull request over 2,000 changed files on any plan. The [generic VM install](https://docs.kodus.io/en/how_to_deploy/deploy_kodus/generic_vm) needs 2 or more cores, 8 GB of RAM and 60 GB of disk, with the webhook receiver on its own port, and the docs state that internet access is optional when both Git and the LLM stay on your network. On the Azure Repos side the [webhook page](https://docs.kodus.io/en/how_to_deploy/platforms/azure_devops/azdevops_webhook) documents a constraint no other forge imposes: the service hook URL has to carry an encrypted `token` query parameter, requests without it get a 403, and the token does not expire. Connecting a whole organization is a separate setting, and its requirements differ by forge: Bitbucket Data Center needs Repository admin permission and Azure DevOps needs Edit subscriptions on the project.
+
+| Tool | GitLab Self-Managed | Bitbucket Data Center | Azure Repos | Self-hosted path |
+| - | - | - | - | - |
+| Greptile | Enterprise, sales-gated | Enterprise, sales-gated | Not listed | Docker Compose or Kubernetes, annual contract, no free trial |
+| CodeRabbit | Yes | Yes, reviewer-event caveat on older DC versions | Yes | Enterprise only, 500+ seats |
+| Qodo | Yes, including air-gapped | Yes, including air-gapped | Cloud only; on-prem marked unavailable in the matrix | On-premises and air-gapped documented |
+| PR-Agent | Yes | Yes | Yes | Open source; CLI, container, Action or webhook |
+| Kodus | Yes | Yes | Yes | Community tier free, self-hosted or cloud, BYOK |
+
+## How to choose
+
+The deciding factor is the vendor's table, not the review output. Three cases fall out of it.
+
+On Azure Repos, Greptile is out and Qodo's on-premises story is unresolved, which leaves the self-hosted reviewers that document a connection there: PR-Agent running as a pipeline job or behind a service hook, or a bot like Kodus with a documented Azure webhook path. That is a smaller field than the general comparison posts suggest, and it is smaller for a boring reason, which is that the forge's API surface and the vendors' sales model both narrow it.
+
+On self-managed GitLab or Bitbucket Data Center with an Enterprise contract already in place, Greptile and CodeRabbit are both real options, and the difference between them is operational rather than analytical. Greptile asks you to provision a database and a cache and to request registry credentials for an air-gapped install. CodeRabbit asks for a 500-seat commitment and an outbound webhook path to its cloud. Which one is cheaper depends entirely on which of those two things your platform team is willing to own.
+
+If you need to evaluate before signing anything, the field is PR-Agent and Kodus Community. Neither requires a contract, both document their limits openly, and both connect to all three forges. The trade-off is that you carry the operational side: a runner, a database, a model key, and the webhook plumbing on the forge. That is a real cost, and for a team without platform capacity it is the reason an Enterprise contract is worth the money even when the open option covers the same forges.
+
+One thing to check before any of this: whether the vendor's provider table has a row for your forge edition. Availability is the only criterion that cannot be worked around with configuration, and it is the one most comparison posts leave out. For the specifics on what Bitbucket Data Center does and does not ship natively, [that split is worth reading next](https://mergerequests.dev/blog/ai-code-review-on-bitbucket-data-center-whats-native-what-isnt/).
