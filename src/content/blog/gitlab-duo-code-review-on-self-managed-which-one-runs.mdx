@@ -1,0 +1,126 @@
+---
+title: "GitLab Duo code review on Self-Managed: which one runs"
+description: "On self-managed gitlab, Duo review is two features, not one. The seat of whoever starts the review picks the engine, and only one of them needs a gitlab--duo runner."
+pubDate: 2026-11-22
+category: "guide"
+platform: "gitlab"
+tags: ["gitlab", "codereview", "selfmanaged", "duo"]
+---
+
+A merge request on GitLab Self-Managed gets reviewed by `@GitLabDuo`, and one of two different features answers. Code Review Flow is the agentic version and runs as a CI/CD job. GitLab Duo Code Review is the non-agentic version and makes a single pass over the diff. Both post under the same reviewer handle, so the merge request looks identical from the outside. The engine behind it and the infrastructure that has to exist before a review can run are not the same, and on Self-Managed those differences land on you.
+
+GitLab says this plainly on [GitLab Duo in merge requests](https://docs.gitlab.com/user/project/merge_requests/duo_in_merge_requests/): when you request a review from GitLab Duo, it automatically runs one of the two code review features based on your add-on.
+
+| Detail | Code Review Flow | GitLab Duo Code Review |
+| --- | --- | --- |
+| Reviewer | `@GitLabDuo` | `@GitLabDuo` |
+| Type | Agentic | Non-agentic |
+| Required add-on | None, uses GitLab Credits | GitLab Duo Enterprise |
+| Context | Repository structure and cross-file dependencies | The merge request and its diffs |
+| Analysis | Multi-step agentic reasoning | Single-pass |
+| Follow-up reviews | Reuses earlier Duo threads | No |
+| Execution | CI/CD job | Not a CI/CD job |
+| Minimum tier | Free, Premium, Ultimate | Premium, Ultimate |
+
+## The seat of whoever starts the review decides which engine runs
+
+The deciding factor is not a project setting. GitLab routes by the seat of the user who initiates the review, and there are four triggers that count as initiating it: requesting a review manually, opening a merge request that is not a draft, marking a draft ready, and pushing new commits with **Start a new review on push** enabled (that last one applies to Code Review Flow only).
+
+If the initiating user holds a GitLab Duo Enterprise seat, the non-agentic GitLab Duo Code Review runs. If they do not, Code Review Flow runs. Both features can run in the same project, on the same day, depending on who touched the merge request last.
+
+That routing rule has an operational consequence people tend to find the hard way: a review's behavior can change because a different person opened the merge request, not because anything in the repository changed.
+
+### How to tell which feature actually ran
+
+GitLab documents the diagnostic. Code Review Flow starts a review session when it runs, so check the merge request activity feed for a session started by GitLab Duo, or look under **AI > Sessions** for the project. If no review session appears, the non-agentic GitLab Duo Code Review ran the review.
+
+That check matters when you are debugging a review that felt shallow on a change that clearly spans files. A single-pass reviewer working from the merge request diff and file contents will not connect a signature change in one file to a caller in another. The agentic flow is designed to. If the review you are looking at did not open a session, you were never getting the cross-file behavior in the first place.
+
+### Why Enterprise seats default away from the agentic flow
+
+Group Owners can configure every review to use Code Review Flow regardless of seat, but GitLab's default goes the other way, and the reason is billing. Code Review Flow consumes GitLab Credits. A group Owner can override the default in **Settings > GitLab Duo > Change configuration** by clearing and re-checking the Code Review Flow box under **Flow execution > Allow foundational flows**.
+
+The default is deliberate: it keeps Enterprise seat holders from spending credits on a feature their add-on already covers. For a mixed-seat organization, that means two review behaviors in one project, and the setting that flips everyone onto the agentic path also puts every review on the metered path. Deciding between those two is the actual configuration question on Self-Managed, and it is a spending decision as much as a quality one.
+
+## Code Review Flow is a CI/CD job, and Self-Managed has to supply the runner
+
+This is the part that catches Self-Managed teams who have only read the feature comparison. Code Review Flow runs as a CI/CD job. If the job has nowhere to run, the review does not post.
+
+The [Code Review Flow prerequisites](https://docs.gitlab.com/user/duo_agent_platform/flows/foundational_flows/code_review/) require a runner tagged `gitlab--duo` with an executor that supports Docker images, or GitLab hosted runners turned on for the project. On GitLab.com you can take the hosted option. On Self-Managed you are registering and tagging a runner yourself, which is a smaller job than it sounds but not zero.
+
+### What the runner actually does
+
+Per [Configure flow execution](https://docs.gitlab.com/user/duo_agent_platform/flows/execution/), the runner downloads the GitLab Duo CLI binary for its OS and architecture from the GitLab package registry (no Node.js or npm needed), runs that CLI over a WebSocket connection to the GitLab Duo Workflow Service, and executes tools like file operations and Git commands as directed by the model. The executor version is managed by GitLab and updated with regular releases, so the runner is a moving dependency rather than something you pin and forget.
+
+The runner clones the whole repository at the start of every flow. On a large monorepo that clone can consume most of the time before the review begins. GitLab offers a beta path where you bake a bare copy of the repository into an image and point the agent configuration at it, so each session fetches only the commits made since the image was built. If review latency on a big repository is the complaint, that is the documented lever, and it is worth knowing it exists before you conclude the agentic flow is too slow.
+
+### Flow configuration is read from the default branch only
+
+The `agent-config.yml` file is read-only from the project's default branch. Files committed to other branches are ignored, even when a flow runs from those branches. This applies to `setup_script`, caching, and the agent configuration keys, so testing a change to flow behavior on a feature branch will not do what you expect. Merge it to the default branch or accept that you are testing the old config.
+
+There is a security detail in `setup_script` worth flagging: those commands run before the sandbox is applied and execute outside it, with access to all environment variables in the flow, including the triggering user's OAuth token and service token. That is a documented behavior, and it means anyone who can merge to the default branch can effectively run commands with those credentials. Treat `agent-config.yml` with the same review requirements you apply to CI configuration, because that is what it is. The runner and agent side of this is the same problem I looked at across all three forges in [AI review compute on GitLab runners, Azure agents and Bitbucket DC builds](https://mergerequests.dev/blog/ai-review-compute-gitlab-runners-azure-agents-bitbucket-dc-builds/).
+
+## GitLab Credits change what a review costs, and the self-hosted boundary
+
+GitLab Credits are the consumption currency for the Duo Agent Platform, and [the credits page](https://docs.gitlab.com/subscriptions/gitlab_credits/) sets out how they are bought and spent. Included credits go to each user on Premium or Ultimate, are individual rather than shareable, and reset monthly without rollover. The monthly commitment pool is shared across the subscription, cannot be reserved for a subset of users, and requires usage caps if you want to bound individual consumption. Beyond that, on-demand credits bill at the list price of $1 per credit used.
+
+Two things here are easy to get wrong. First, GitLab Duo Pro and Enterprise and their associated features are not billed on usage and do not consume credits, so the non-agentic GitLab Duo Code Review does not draw from the pool. Second, when a flow runs as a service account, usage is billed to the namespace even if a user started the flow. Code Review Flow is a foundational flow, so it bills to the namespace. A team that assumes each review lands on the individual who triggered it will misread the dashboard.
+
+Self-Managed teams on the Free tier are not excluded: the Free tier can purchase a monthly commitment pool for the instance or a group namespace and get access to Agent Platform features without a Premium or Ultimate subscription, with on-demand usage capped at $25,000 per calendar month before it turns off and resets the following month.
+
+### Self-hosted AI Gateway and the Agent Platform service
+
+For an instance that runs models inside its own network, the [Self-Managed configuration](https://docs.gitlab.com/administration/gitlab_duo_self_hosted/configure_duo_features/) covers the wiring: a local AI Gateway URL, and from GitLab 18.4 an additional local URL for the Duo Agent Platform service, typically the same host on gRPC port `:50052` with no URL prefix. The Agent Platform prerequisites also note a version constraint worth reading before you plan an upgrade path: on GitLab 18.9 and earlier you cannot use the Agent Platform with the GitLab Duo Enterprise add-on, and 18.10 or later is required. On GitLab 18.8 and later the Agent Platform needs to be turned on; on 18.7 and earlier it sits behind beta and experimental features.
+
+An instance with an offline license needs the GitLab Duo Agent Platform Self-Hosted add-on to reach the Agent Platform service. That is a specific add-on for a specific deployment shape, and it is the detail that decides whether the agentic review path is available at all in an air-gapped install.
+
+### Two timeouts decide whether a large review completes
+
+The non-agentic feature has a documented failure mode on large merge requests. It sends the diffs and the original contents of changed files, retries without the original file contents if that fails, and returns a generic error if the retry also fails. The retry shrinks the prompt and reduces the context the model has, so comments can come back less specific than a review that had the file contents. Reviews that do not complete inside the AI Gateway request timeout surface as generic errors too.
+
+That timeout defaults to 120 seconds and is configurable between 60 and 600 seconds in the admin settings. There is a second, separate timeout on the AI Gateway side: by default the gateway ends a single chat model request after 30 seconds, raised with the `AIGW_DUO_CHAT__MODEL_REQUEST_TIMEOUT` environment variable on the gateway container. A slow self-hosted model behind a large context window can hit the second one while the first one still looks generous. If reviews against your own models fail without a useful error, those are the two knobs to look at before blaming the model.
+
+## Custom instructions steer the review, they do not enforce it
+
+Both features take custom instructions. For the non-agentic feature, [custom review instructions](https://docs.gitlab.com/user/gitlab_duo/customize_duo/review_instructions/) live in `.gitlab/duo/mr-review-instructions.yaml`, with optional glob `fileFilters` per instruction block so you can scope Ruby conventions to `*.rb` and exclude `spec/**`. Multiple instruction groups can apply to one file, and comments generated from them are labeled with the instruction name.
+
+GitLab is explicit about the ceiling: custom review instructions are guidance for the AI reviewer, not enforced policies, and the docs advise against relying on them for security controls, compliance obligations, or anything requiring consistent enforcement. Instructions are appended to the standard review criteria rather than replacing them, and a review that finds nothing leaves a summary comment that the custom instructions do not apply to.
+
+| Scope | How it is set | Read from |
+| --- | --- | --- |
+| Project | `.gitlab/duo/mr-review-instructions.yaml` in the repository | The branch under review |
+| Group | A template project selected under **Settings > GitLab Duo** | The template project |
+| Instance | A template project selected in the admin area | The template project |
+
+Group and instance instructions combine with project-level ones. Two operational notes: group instructions are visible to anyone who can view a merge request in the group even without access to the project holding the file, so nothing confidential belongs in that file, and a Code Owners entry protecting `mr-review-instructions.yaml` is the practical way to keep it from drifting.
+
+Automatic reviews are configured separately from all of this, in **Settings > Merge requests**, and can be narrowed with a `.gitlab/duo/mr-review-automated-rules.yaml` exclusion file that matches target branches, source branches, or authors with glob patterns. Exclusion rules only suppress the automatic review; a manual request still runs. If you want bots and release branches out of the review queue, that file is where it happens.
+
+### Approvals and change requests
+
+GitLab Duo can approve a merge request when it finds nothing to comment on, and an approval from GitLab Duo does not count toward required approvals. It can also request changes, and that behavior is beta and behind a feature flag, enabled per project, group, or instance. A request for changes from GitLab Duo has the same blocking effect as one from a user if your project blocks on requests for changes, and it stays until GitLab Duo approves in a follow-up review or someone bypasses it. There is a real asymmetry in that pair: the approval is cosmetic for gating purposes, and the request for changes is not.
+
+## What third-party reviewers add on Self-Managed GitLab
+
+Duo's native review covers one thing well: the merge request in front of it, with instructions you maintain in the repository. It does not cover policy you want evaluated as a rule with a pass or fail, and the credits model meters the agentic path per review.
+
+Tools that run inside your own network fill different parts of that gap, and they do not all have the same deployment shape:
+
+| Tool | Self-managed deployment | Notable constraint |
+| --- | --- | --- |
+| GitLab Duo (native) | Self-Managed, Dedicated, or Self-Hosted AI Gateway | Agentic path needs a `gitlab--duo` runner; credits billed to the namespace |
+| Kodus | Self-hosted via Docker or Kubernetes, or cloud | Community self-hosted allows production use within the limits it enforces: up to 10 Kody Rules and 3 plugins; BYOK on every plan |
+| PR-Agent | Self-hosted, runs as pipeline job or webhook receiver | Open source; you own the trigger wiring |
+| CodeRabbit, Qodo | Self-hosted, Enterprise tier | Sales-gated; see their documented seat floors and platform lists |
+
+Kodus is worth a closer look for a Self-Managed GitLab team specifically because of how the two limits interact with BYOK. The [Docker install](https://docs.kodus.io/en/how_to_deploy/deploy_kodus/generic_vm) lists 2+ cores, 8GB RAM and 60GB disk for the default sandbox mode, and states that internet access is optional when both Git and the LLM run on-prem. Reviews run on your own model key on every plan including Community, so review volume does not meter against a vendor credit pool the way the agentic Duo path does. The trade is that Community caps Kody Rules at 10 and plugins at 3, which is a real ceiling once your rule set grows past a single team's conventions. The [GitLab webhook setup](https://docs.kodus.io/en/how_to_deploy/platforms/gitlab/gitlab_webhook) asks for the secret token to be left blank and consumes comment and merge request events only.
+
+For an instance that already has GitLab runners, PR-Agent is the cheaper starting point since the compute is already there. I compared those two paths in [Kodus vs PR-Agent for self-managed GitLab](https://mergerequests.dev/blog/kodus-vs-pr-agent-for-self-managed-gitlab/), and the short version is that PR-Agent's cost is the trigger plumbing you write and maintain, while Kodus's is the rule and plugin limits on the free tier. If the pressure on your team is review volume from generated code rather than policy coverage, the per-forge ceilings in [reviewing AI-generated code at volume](https://mergerequests.dev/blog/reviewing-ai-generated-code-at-volume-the-ceilings-per-forge/) are the more relevant comparison.
+
+## What to check before you turn either feature on
+
+Work out which of the two features your team will actually get before you promise anyone an agentic reviewer. If your project owners all hold Duo Enterprise seats, the default sends every review to the non-agentic feature, and you will need to override that setting to get cross-file context. If they do not hold Enterprise seats, reviews run through Code Review Flow and consume credits billed to the namespace, which means someone needs to own the usage caps.
+
+Then check the plumbing. A `gitlab--duo` tagged runner with a Docker-capable executor has to exist for the agentic path, `agent-config.yml` has to be on the default branch for any of its settings to apply, and both timeouts need to be sized for the largest merge requests your team actually opens. Those are the three things that turn a documented feature into a review that posts.
+
+The instructions file is the last piece, and it is the one most teams over-invest in. GitLab's own documentation says custom instructions shape a review without guaranteeing application, so treating `mr-review-instructions.yaml` as a policy engine will disappoint you. It is good at encoding house style and getting comments labeled with the rule they came from. Anything you need to block a merge on belongs in a required status check or a merge request approval rule, where the outcome is not probabilistic. If your team is deciding between native Duo review and a reviewer you configure with your own rules, [the self-managed GitLab page on reviewers that follow your team's rules](https://mergerequests.dev/blog/gitlab-self-managed-ai-review-that-follows-your-own-rules/) covers where each of them draws that line.
