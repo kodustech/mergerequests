@@ -1,0 +1,70 @@
+---
+title: "GitLab external status checks: gating an AI reviewer on a merge request"
+description: "GitLab external status checks are Ultimate-only, fail after two minutes pending, and reject responses against a stale HEAD. What that means for gating an AI reviewer on gitlab.com, Self-Managed or Dedicated."
+pubDate: 2026-11-23
+category: "guide"
+platform: "gitlab"
+tags: ["gitlab", "codereview", "selfmanaged", "statuschecks"]
+faq:
+  - q: "Do GitLab external status checks work on Self-Managed?"
+    a: "Yes. External status checks are Ultimate tier and are available on GitLab.com, GitLab Self-Managed and GitLab Dedicated. They are configured per project and are not shared between projects, and a new or updated check applies to new merge requests only."
+  - q: "Does an external status check block a merge by default?"
+    a: "No. The status shows on the merge request as a non-blocking widget until the Status checks must succeed checkbox is enabled under Settings > Merge requests. Blocking is a separate setting from creating the check."
+  - q: "What happens if the external service never responds to a status check?"
+    a: "The check stays in the pending state, and status checks fail if they stay pending for more than two minutes. With Status checks must succeed enabled, a failed check holds the merge until a service responds or the check is removed."
+  - q: "Can the HMAC shared secret be rotated without recreating the check?"
+    a: "No. GitLab does not show or allow modification of the HMAC shared secret value after the check is created. Rotating it means deleting the external status check and recreating it with the new secret."
+---
+
+On GitLab, an AI reviewer that only leaves comments cannot stop a merge. The mechanism that can is an external status check, and it is an Ultimate feature available on GitLab.com, GitLab Self-Managed and GitLab Dedicated. Two documented constraints decide how you build around it: a check fails if it stays pending for more than two minutes, and a response that does not name the current HEAD of the source branch is rejected with a 409 Conflict. Both change what a reviewer running as a CI job can promise, and neither is obvious from the feature list.
+
+## What an external status check is on GitLab
+
+GitLab calls an external service over HTTP when a merge request changes state, and the service answers with a status that GitLab shows on the merge request. Per the [external status checks page](https://docs.gitlab.com/user/project/merge_requests/status_checks/), the payload goes out when a merge request is updated, closed, reopened, approved, unapproved or merged, and when code is pushed to the source branch. The payload carries an `external_approval_rule` object with the check's `id`, `name` and `external_url`, so a service can tell which check it is answering.
+
+The check is configured per project and is not shared between projects. Adding or updating one applies to new merge requests only, so existing ones are not re-evaluated. Each check has three states: `pending` is the default while GitLab waits for a response, `passed` means the service approved it, and `failed` means the service denied it.
+
+By default this is informational. The widget appears on the merge request and the merge still goes through. Blocking requires the **Status checks must succeed** checkbox under **Settings > Merge requests**, which is a separate setting from creating the check.
+
+## The two-minute pending window and the stale-HEAD rejection
+
+Status checks fail if they stay pending for more than two minutes. That window covers everything between GitLab sending the payload and the service answering: webhook delivery, job scheduling, runner queue time, model latency. A reviewer that runs as a CI job on a busy runner pool can miss the window with nothing wrong in the review itself, and the check fails. With blocking turned on, the merge is held. This is the same runner queue problem that shows up across the forges in [AI review compute on GitLab runners, Azure agents and Bitbucket DC builds](https://mergerequests.dev/blog/ai-review-compute-gitlab-runners-azure-agents-bitbucket-dc-builds/), and on GitLab it lands on the merge request as a failed check rather than an error you can see.
+
+The second constraint is the SHA. A status response has to include the SHA at HEAD of the source branch, and GitLab returns `409 Conflict` to responses that do not refer to the current HEAD. GitLab frames this as a safety property: a service can process and answer out-of-date commits without that answer being applied to a commit it never saw. For a reviewer that re-runs on every push, that is the behavior you want. For one that batches work, an answer computed against the previous commit is discarded, the check stays pending, and the two-minute clock keeps running.
+
+## HMAC, protected branches, and a secret you cannot read back
+
+The add form takes a service name that must be unique per project, an API URL using HTTP or HTTPS, a target branch, and an HMAC shared secret. HMAC authentication is what lets your service verify that a payload came from GitLab rather than from anything that can reach the endpoint.
+
+The secret has one operational catch worth knowing before you build: its value cannot be viewed or modified after creation. Rotating it means deleting the check and recreating it with a new secret, so a rotation is a short outage for that gate. Treat it like a credential change and schedule it, because there is no edit path.
+
+The target branch selector is populated from the project's protected branches, or you can set the check to apply to all branches. Access to the responses is wider than the configuration: users with the Reporter role and above can view them, and when the project has internal visibility, any authenticated user who can view the merge request can too. GitLab also warns in the [status checks API](https://docs.gitlab.com/api/status_checks/) that a check sends information about all applicable merge requests to the external service, confidential merge requests included. If the reviewer is a hosted service, that is a data-egress decision rather than a settings detail.
+
+## Answering a check through the REST API
+
+Four endpoints do the work, and the SHA requirement shapes how a service has to track state.
+
+- `POST /projects/:id/external_status_checks` creates the check, taking `name`, `external_url`, an optional `shared_secret` and optional `protected_branch_ids`.
+- `GET /projects/:id/merge_requests/:merge_request_iid/status_checks` lists the checks that apply to one merge request and their current status.
+- `POST /projects/:id/merge_requests/:merge_request_iid/status_check_responses` answers a check with `sha`, `external_status_check_id` and `status`.
+- `POST /projects/:id/merge_requests/:merge_request_iid/status_checks/:external_status_check_id/retry` re-sends the current merge request state to a service after a failure.
+
+Setting a status needs a personal access token belonging to a user with the Developer, Maintainer or Owner role on the target project. The retry endpoint returns `202` on success and `422` with `External status check must be failed` when the check has already passed. Since the response carries the SHA, the service has to remember which commit it reviewed instead of assuming the commit in the webhook is still current by the time it answers.
+
+## What actually blocks a merge when the reviewer is an AI tool
+
+The status check is a generic hook. Any service that can receive a webhook and post back can gate a merge with it, and none of the mechanism is specific to AI review. What differs between tools is whether they expose a status at all, and whether their blocking behavior is that status or their own review state.
+
+Kodus documents the split clearly. Its [request changes on critical issues](https://docs.kodus.io/en/how_to_use/code_review/policy.md) setting, which sets a review to Request Changes when it finds a critical issue, is not available when GitLab is the only connected provider. Its Kody Code Review check, the one that posts to the head commit, exists on the GitHub App and Forgejo only, and even there it reports whether the review ran rather than whether the pull request has findings, so it passes with open suggestions. On GitLab the visible signals are the review state and the status reaction, and per the [review flow docs](https://docs.kodus.io/en/how_to_use/code_review/flow.md) GitLab shows a lock for the no-license case where GitHub and Forgejo use native reactions. None of that is an external status check, so on a GitLab-only setup the gate is a review-state gate.
+
+That difference decides behavior when something goes wrong. A GitLab external status check on Ultimate fails closed: if the service never answers, the check stays pending, pending fails the check, and with blocking enabled the merge is held until someone responds or the check is removed. A review-state gate leaves the merge available to anyone whose approval satisfies the branch rules.
+
+| Lever on GitLab | Where it is configured | Blocks a merge |
+| - | - | - |
+| External status check | GitLab project, Settings > Merge requests | Yes on Ultimate, once Status checks must succeed is enabled |
+| Reviewer review state (request changes) | The reviewer's own policy settings | Only where the forge supports it. Kodus documents its request-changes setting as unavailable when GitLab is the only connected provider |
+| Reviewer-posted status check | The reviewer's forge integration | GitLab is not among the forges where Kodus posts its Kody Code Review check |
+
+The tier boundary is the other half of the decision. External status checks are Ultimate only. A team on GitLab Premium has no documented path to a hard gate through this mechanism, and the honest choice there is between upgrading and treating AI review as advisory. The Azure Repos equivalent has its own shape, covered in [merge gating for AI reviewers on Azure Repos](https://mergerequests.dev/blog/azure-repos-merge-gating-for-ai-reviewers-the-status-check-policy/), where a required status check policy is the gate and a `notSet` status is treated as pending.
+
+If you are also weighing which GitLab review feature your team actually gets, that routing depends on seats and add-ons rather than on anything here, and [which Duo code review feature runs on Self-Managed](https://mergerequests.dev/blog/gitlab-duo-code-review-on-self-managed-which-one-runs/) covers it.
