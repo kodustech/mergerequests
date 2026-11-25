@@ -1,0 +1,95 @@
+---
+title: "AI code review tools for Azure Repos: Services vs Server"
+description: "Which AI code review tools run on azure-devops repos, by edition: Copilot, CodeRabbit, Qodo, PR-Agent and Kodus on Services, and what changes on Server."
+pubDate: 2026-11-25
+category: "comparison"
+platform: "azure-devops"
+tags: ["azuredevops", "azurerepos", "codereview", "ai"]
+---
+
+The list of AI code review tools that will actually review an Azure Repos pull request is shorter than a general "best AI code review tools" page suggests, and the first cut is not the vendor. It is the edition. On Azure DevOps Services (`dev.azure.com`) you can choose between Microsoft's own reviewer and several vendor integrations. On Azure DevOps Server you are choosing between a self-hosted tool and a vendor integration you wire up yourself, and a few vendors document an Azure DevOps integration without saying which edition it covers.
+
+That distinction decides the setup path, the permissions you need, and whether a hosted vendor can reach your instance at all, so it is worth settling before you compare review quality. Here is the per-tool picture on Azure Repos, with the gates and limits that change the decision.
+
+## What decides which tools can review an Azure Repos pull request
+
+The two editions do not share an integration surface. Azure DevOps Services is a hosted service at a public endpoint, so a vendor integration reaches it outbound, authenticates with a PAT or a Microsoft Entra service principal, and receives pull request events through service hooks. Azure DevOps Server runs inside your network, so the same vendor either needs an inbound path to your instance or you run the reviewer yourself.
+
+The permission model adds a second constraint that applies on both editions. Creating a service hook subscription requires membership in the Project Collection Administrators group or the Project administrator group, so a reviewer integration is never a pure developer-side setup. Somebody with project-level admin rights has to do the wiring, and on Services the endpoint also has to be public HTTPS. Webhooks cannot target loopback or special-range addresses, and a service behind a VPN needs Azure DevOps inbound IPs allowed.
+
+That is the same set of trade-offs I compared per forge in [AI review compute on GitLab runners, Azure agents and Bitbucket DC builds](https://mergerequests.dev/blog/ai-review-compute-gitlab-runners-azure-agents-bitbucket-dc-builds/), and on Azure Repos the compute question resolves to whether the tool runs on your agent pool or someone else's infrastructure.
+
+## Copilot code review on Azure DevOps Services
+
+Microsoft's reviewer is the one that runs inside the platform, and the [get started page](https://learn.microsoft.com/en-us/azure/devops/repos/git/copilot-code-reviews?view=azure-devops) is headed Azure DevOps Services. Enablement cascades through three scopes: a Project Collection Administrator turns it on at the organization level under Organization settings > Repos > Repositories, a Project Administrator can then scope it to individual projects, and a repository owner turns it on per repository where project settings allow overrides. Verifying it took effect is a one-step check, since GitHub Copilot then appears in the Reviewers list on any pull request in that repository.
+
+Automatic reviews are a separate setting from enablement. Copilot is available as a reviewer once the feature is on, and a branch policy on each target branch is what requests the review without a human adding it.
+
+The limit that decides how you use it: Copilot always leaves a Comment review. It never approves a pull request and never requests changes, so its review does not satisfy required-reviewer policies and does not block merging. If you need a merge to stop on a finding, Copilot is not the mechanism, and [merge gating for AI reviewers on Azure Repos](https://mergerequests.dev/blog/azure-repos-merge-gating-for-ai-reviewers-the-status-check-policy/) covers what the status check policy actually does when a reviewer reports back.
+
+There are also hard gates and concurrency caps on each review. The pull request has to be active with no merge conflicts, the repository has to be 10 GB or less, and the pull request can touch 100 files and 100 changes at most. One completed review is allowed per merge commit, one concurrent review per pull request, five per organization, and two per user.
+
+Billing runs through Azure Cost Management against an Azure subscription linked to the organization, and credits purchased with a GitHub Copilot plan do not count toward usage here. One more thing worth knowing before a rollout: the [troubleshooting FAQ](https://learn.microsoft.com/en-us/azure/devops/repos/git/copilot-code-reviews-faq?view=azure-devops) states that Copilot data residency does not align with Azure DevOps organization data residency. An organization hosted in the EU can still have review processing happen in another geography, which is the kind of line that ends a rollout in a regulated environment.
+
+For custom instructions, Copilot reads organization and project settings plus repository files at `.github/copilot-instructions.md` or `.azuredevops/copilot-instructions.md`, with path-scoped `*.instructions.md` files carrying an `applyTo` value. Repository and path-scoped files are read from the pull request's target branch, so a change to the instructions file applies after it merges, not to the pull request that edits it.
+
+## CodeRabbit on Azure DevOps
+
+[CodeRabbit's Azure DevOps page](https://docs.coderabbit.ai/platforms/azure-devops) is the most explicit of the vendor integrations about authentication. A Microsoft Entra service principal is the recommended method and the one new Azure DevOps organizations and new Enterprise SSO workspaces use, with a client ID and client secret, while existing PAT-based organizations keep their current flow. Write operations need Identity: Read (`vso.identity`) on top of the resource scopes, so the credential can resolve identities before posting comments. Setup is admin-only on both sides, since it needs CodeRabbit organization administrator rights and Project Administrator or Project Collection Administrator in Azure DevOps.
+
+The self-hosted option is real but gated. Per the [self-hosted overview](https://docs.coderabbit.ai/self-hosted/overview), the review agent runs in your infrastructure for Enterprise customers with 500 or more user seats, and Azure DevOps is on the supported platform list alongside GitHub Enterprise Server, GitLab self-managed and Bitbucket Data Center. The reverse tunnel that keeps connections outbound from your network is tagged for those three and not for Azure DevOps, so an Azure DevOps Server instance that needs private-network connectivity has a different path than a GitLab self-managed one.
+
+If your team is on Azure DevOps Server and you were counting on the self-hosted deployment as the answer, the seat floor is the number to check first.
+
+## Qodo on Azure Repos: the docs point two ways
+
+Qodo is the case where the edition question does not have a clean answer on the vendor's own site. The [deployment matrix](https://docs.qodo.ai/install-qodo/deployment-model-support) lists Azure DevOps Cloud with on-prem marked as not available, and it has no Azure DevOps Server row at all. The [on-premises Azure DevOps install page](https://docs.qodo.ai/on-prem/git-integration/install/azure-devops) then names Azure DevOps Server in its network prerequisites, saying that for Server the webhook must be reachable within your internal network, while for Services it must be reachable from Azure's cloud.
+
+The install page is the more specific statement, and it also shows how much of the setup assumes Microsoft identity: Qodo authenticates with Microsoft Entra ID, the installer needs Global Administrator or Cloud Application Administrator to create the app registration and grant consent, or a PAT when Entra admin access is unavailable, and ticket context comes from Azure Boards work items. If you are on Server and this matters, get the supported-edition answer in writing from the vendor rather than reading it off the matrix.
+
+## PR-Agent on Azure Repos
+
+[PR-Agent](https://docs.pr-agent.ai/overview/supported_platforms/) is the self-hosted open source option, and its support matrix lists Azure DevOps with a check for both the CLI and the app/webhook usage, plus a dedicated Azure DevOps pipeline path. It is MIT licensed, and the cost of running it is the trigger wiring you own: a pipeline job or a webhook receiver, plus the model key behind it.
+
+One current caveat from that same matrix: `/help_docs` has been disabled since v0.36.1 pending a fix for a credential-exposure issue, tracked as #2445. That is a single command, not the review path, but it is the kind of detail worth knowing before you promise the tool's full command set to a team.
+
+If your organization already runs Azure Pipelines agents, PR-Agent is the cheapest starting point on either edition, because the compute is already there and the remaining work is plumbing.
+
+## Kodus on Azure Repos
+
+[Kodus](https://docs.kodus.io/en/knowledge_base/how-to-set-up-ai-code-review-on-azure-devops) connects to Azure DevOps Services with a personal access token and receives pull request events through service hooks, which it creates automatically when you save the repository selection. That automatic registration needs the Edit subscriptions permission on the project, and Project Administrators have it. No Azure DevOps Server path is documented on the setup page, so the Azure side of Kodus is scoped the same way Microsoft's own reviewer is.
+
+There is one Azure-specific detail in the webhook setup that does not apply to the other forges: unlike GitHub, GitLab, Bitbucket and Forgejo, an Azure Repos webhook request must carry an encrypted `token` query parameter, and [the webhook guide](https://docs.kodus.io/en/how_to_deploy/platforms/azure_devops/azdevops_webhook) states that requests without it get a 403. If you register the hook by hand, that token has to be generated from the instance's own encryption key and webhook token, and a key mismatch produces a token that looks valid and is rejected. The PAT side is similarly specific: it needs Code read and write, and the [PAT guide](https://docs.kodus.io/en/how_to_use/code_review/general_config/azure_devops_pat) tells you to scope the token to your organization rather than All accessible organizations, since Azure DevOps is retiring tokens scoped to every organization.
+
+On limits, Kodus reviews on your own model key on every plan including the free tier, and it skips a review when a pull request has more than 2,000 reviewable files, counting files that only a custom agent reviews. The free and self-hosted Community tiers cap Kody Rules at 10 active and plugins at 3 running at a time, with rules above the cap shown as Locked and skipped. For a small team that is fine; for a large rule set it is the ceiling that pushes you to a paid plan.
+
+## How the tools compare on Azure Repos
+
+| Tool | Edition support | Authentication | Self-hosted | Merge blocking |
+| --- | --- | --- | --- | --- |
+| Copilot code review | Azure DevOps Services | Azure subscription; enablement by PCA | No | No. Always leaves a Comment review |
+| CodeRabbit | Azure DevOps Services and Server via Enterprise SSO | Microsoft Entra service principal, or PAT for existing setups | Enterprise, 500+ seats | Not stated on the platform page |
+| Qodo | Matrix lists Azure DevOps Cloud only; on-prem page names Server in its network prerequisites | Microsoft Entra ID with admin consent, or PAT | On-prem available per the deployment matrix for other providers, not for Azure DevOps Cloud | Not stated on the platform page |
+| PR-Agent | Azure DevOps Services and Server | Credentials you configure yourself | Yes, open source | Only through what you build around it |
+| Kodus | Azure DevOps Services | PAT plus service hooks; signed token on the webhook URL | Yes, Docker or Kubernetes; Community tier without a license key | Not stated on the platform page |
+
+Two cells in that table say not stated because the vendor documentation I read does not establish them, and it is better to see the gap than to assume a capability from the category.
+
+## What to check before you pick
+
+If you are on Azure DevOps Server, the field is small: PR-Agent from a pipeline, or a vendor integration you have confirmed supports Server rather than Services. That is not a shortcoming of the tools so much as the shape of a self-managed instance, since every hosted reviewer has to reach into your network somehow.
+
+If you are on Services, the decision is really about what you want the reviewer to do. Copilot is the lowest-friction option and the only one that needs no third party, but its review is advisory by design, so a team that wants a merge to stop on a finding still needs the status check policy doing the blocking. CodeRabbit and Qodo both fit organizations that already run Microsoft Entra and want the integration managed by admins, with CodeRabbit's seat floor being the practical filter on self-hosting. Kodus and PR-Agent are the two paths where the reviewer runs on infrastructure you control, and they differ in what you pay in plumbing versus plan limits: PR-Agent costs the trigger wiring you write and maintain, Kodus costs the rule and plugin caps on the free tier, and neither meters review volume against a vendor credit pool.
+
+One thing all of them share: none of these integrations is a developer-side setup on Azure Repos, because the service hook subscription itself requires project-level admin rights. Budget for that conversation with whoever owns the project, not just with the team that wants reviews.
+
+## FAQ
+
+**Can Copilot code review block a merge in Azure Repos?**
+No. It always leaves a Comment review, never approves a pull request, and never requests changes, so its review does not satisfy required-reviewer policies and does not block merging. A branch policy or status check has to do the blocking.
+
+**Which AI reviewers run on Azure DevOps Server?**
+PR-Agent is the documented self-hosted option, since its support matrix lists Azure DevOps and an Azure DevOps pipeline as supported usage. Microsoft's Copilot code review is Services only, and Qodo's deployment matrix lists Azure DevOps Cloud with on-prem marked unavailable even though its on-premises install page names Azure DevOps Server in its network prerequisites.
+
+**Does an Azure Repos webhook need authentication the way GitLab or GitHub webhooks do?**
+Microsoft documents no signature on service hook payloads. Integrations add their own: a Kodus webhook URL on Azure Repos must carry an encrypted `token` query parameter, and requests without it are rejected with a 403.
