@@ -1,0 +1,80 @@
+---
+title: "Best AI code review tools for a team on GitLab"
+description: "AI code review tools for GitLab.com, GitLab Self-Managed and GitLab Dedicated: the two native reviewers, the third-party options, and what can actually block a merge on gitlab."
+pubDate: 2026-11-27
+category: "guide"
+platform: "gitlab"
+tags: ["gitlab", "selfmanaged", "codereview", "ai"]
+faq:
+  - q: "Does GitLab Duo Code Review require a specific runner on Self-Managed?"
+    a: "GitLab Duo Code Review does not run as a CI/CD job, so it does not need a runner. Code Review Flow does, and it needs a runner with the gitlab--duo tag and an executor that supports Docker images. Hosted runners are an offering for GitLab.com and GitLab Dedicated, so a self-managed instance registers its own."
+  - q: "Can an AI reviewer block a merge on GitLab?"
+    a: "Not through its own approval. A Duo approval or request-changes decision is beta and does not count toward required approvals. The documented gate is a required external status check on the project with Status checks must succeed enabled, which is Ultimate-only and configured per project."
+  - q: "Which AI code review tools support GitLab Self-Managed?"
+    a: "GitLab's own two reviewers run on Self-Managed, with different add-on and runner requirements. CodeRabbit connects through an OAuth2 application and documents GitLab 16.x and above. Qodo's deployment matrix lists GitLab Self-Managed with on-premises and air-gapped options. PR-Agent runs as a GitLab pipeline or webhook. Kodus connects by OAuth application or access token and can be self-hosted with your own model keys."
+---
+
+A team on GitLab picks an AI reviewer under constraints that a GitHub-first comparison will not show. GitLab has two native reviewers, and which one runs depends on the seat of the user who triggers the review. Self-Managed adds a runner requirement that GitLab.com does not have, and third-party tools reach a self-managed instance through an OAuth application or an access token rather than an app installation. Edition and authentication path narrow the shortlist before anyone compares review quality.
+
+## GitLab's two native reviewers
+
+GitLab Duo Code Review is the non-agentic reviewer. It requires the GitLab Duo Enterprise add-on and runs on Premium and Ultimate across GitLab.com, Self-Managed and Dedicated, and it became generally available in 18.1. The [feature documentation](https://docs.gitlab.com/user/gitlab_duo/code_review/) lists what it sends to the model: the merge request title and description, the diffs, the filenames, the original contents of the changed files, and your custom instructions.
+
+Code Review Flow is the agentic one, part of the GitLab Duo Agent Platform, and it is [available on Free, Premium and Ultimate](https://docs.gitlab.com/user/duo_agent_platform/flows/foundational_flows/code_review/) with usage billed in GitLab Credits. It reached GA in 18.8 and arrived on the Free tier on GitLab.com with Credits in 18.10. A review runs as a service account, and the [credits documentation](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/subscriptions/gitlab_credits.md) attributes that usage to the namespace rather than to the seat that triggered it, which matters when a group is drawing on a shared commitment.
+
+### Which one runs is a seat question
+
+The routing rule lives in the [merge request documentation](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/user/project/merge_requests/duo_in_merge_requests.md): if the user who initiates the review holds a GitLab Duo Enterprise seat, the non-agentic feature runs, because it does not consume GitLab Credits. Without that seat, Code Review Flow runs. Both can run in the same project, and a group Owner can switch all reviews to Code Review Flow regardless of seat, which changes the billing picture for the whole group.
+
+The trigger points differ, so map them against how your team works. A review starts when someone requests it manually, when a merge request is created (drafts are skipped), when a draft is marked ready, and, for Code Review Flow only, when new commits are pushed with Start a new review on push turned on. Follow-up reviews in Code Review Flow read the earlier Duo threads and replies, so a second pass knows what was already raised on the merge request.
+
+Review instructions are per project, and automatic reviews respect an exclusion file. GitLab reads `.gitlab/duo/mr-review-automated-rules.yaml` with keys for `target_branches`, `source_branches` and `authors`, patterns support globs, and the file is read from the default branch only. A merge request that adds the file is not exempt from automatic review until that change lands.
+
+### The Self-Managed requirement that decides whether Code Review Flow is usable
+
+Code Review Flow runs as a CI/CD job, so it needs a runner with the `gitlab--duo` tag and an executor that supports Docker images. [Hosted runners](https://docs.gitlab.com/ci/runners/hosted_runners/) are an offering for GitLab.com and GitLab Dedicated, which leaves a self-managed instance registering its own runner before the flow can execute at all. On an air-gapped instance, that runner also needs a reachable model endpoint, either through the AI Gateway or through GitLab Duo with self-hosted models.
+
+GitLab Duo Code Review does not need that runner, but it depends on the AI Gateway request timeout. Reviews that do not finish inside the window surface as a generic error. On large merge requests the feature sends the diffs plus the original file contents, retries without the file contents if the first request fails, and returns a generic error if the retry fails too. The retry shrinks the prompt and the context the model has when it writes comments, so findings get less specific. Splitting the merge request and excluding irrelevant files are the documented mitigations, and the [add-on and runner split on Self-Managed](https://mergerequests.dev/blog/gitlab-duo-code-review-on-self-managed-which-one-runs/) is worth reading before you pick between the two features.
+
+## Third-party reviewers and what each one needs on a self-managed instance
+
+### CodeRabbit
+
+CodeRabbit connects to a self-managed GitLab instance through an OAuth2 application created on your instance. The [setup page](https://docs.coderabbit.ai/platforms/self-hosted-gitlab) documents GitLab 16.x and above as the supported range, with 15.x listed as likely to break in ways that look like a broken integration rather than a version floor. Onboarding is either automated, using an admin access token to create a bot user, or manual, where you create the user and the application yourself, and an instance-wide application is recommended unless reviews should stay inside one group. CodeRabbit also sells a self-hosted deployment of its own, which the [self-hosted overview](https://docs.coderabbit.ai/self-hosted/overview) scopes to the Enterprise tier.
+
+### Qodo
+
+Qodo's [deployment matrix](https://docs.qodo.ai/install-qodo/deployment-model-support) lists GitLab Self-Managed with all four models available: multi-tenant, single-tenant, on-premises and air-gapped. Its Azure DevOps row offers no on-premises option, so for a locked-down GitLab instance Qodo is one of the few hosted vendors with a documented path that does not require an outbound connection to a shared service.
+
+### PR-Agent
+
+PR-Agent is the MIT-licensed option you run yourself. Its [support matrix](https://docs.pr-agent.ai/overview/supported_platforms/) marks GitLab as supported for every command, with a GitLab pipeline and a webhook both listed as valid usage. You supply the model, which is what makes it work in an air-gapped setup where no vendor can reach your instance.
+
+### Kodus
+
+Kodus connects GitLab through an OAuth application or through a personal or group access token, and the [OAuth setup page](https://docs.kodus.io/en/how_to_deploy/platforms/gitlab) points the authorization and token URLs at your own domain for a self-managed instance. One line in that page costs an afternoon if you miss it: the scope set has to include `api`, because `read_api` can read repositories but cannot post comments or manage webhooks, and the shipped default in `.env.schema` is the read-only set. Kody Rules keep review standards as configuration in the repository with centralized config, and BYOK runs reviews on your own provider keys.
+
+## Blocking a merge on GitLab
+
+No native GitLab reviewer's opinion is a merge gate. The mechanism that does hold a merge is described in [GitLab's status checks documentation](https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/user/project/merge_requests/status_checks.md): a required external status check on the project with Status checks must succeed enabled, where the check has to answer within two minutes or the pending state fails, and a response against a stale HEAD returns a 409. That mechanism is Ultimate-only and configured per project. I went through the failure modes in [gating an AI reviewer on a GitLab merge request](https://mergerequests.dev/blog/gitlab-external-status-checks-gating-an-ai-reviewer-on-a-merge-request/).
+
+The reviewer's own vote is weaker than most teams assume. A Duo approval or request-changes decision is still beta, was introduced in 19.5 behind a flag, and is enabled by default on GitLab.com, Self-Managed and Dedicated from 19.6. Even with the flag on, a Duo approval does not count toward required approvals. For Kodus the same limit is documented from the other side: [request changes on critical issues](https://docs.kodus.io/en/how_to_use/code_review/policy) is not available when GitLab is your only connected provider, and the Kody Code Review check that reports whether a review ran exists on the GitHub App and Forgejo only. So on GitLab, plan the gate as separate configuration from the reviewer, and treat the reviewer as the thing that produces findings.
+
+## GitLab AI review options compared
+
+| Option | Runs on Self-Managed GitLab | Rules you control | Merge gate on GitLab |
+| --- | --- | --- | --- |
+| Code Review Flow | Yes, with a runner carrying the `gitlab--duo` tag | Review instructions per project; exclusions in `.gitlab/duo/mr-review-automated-rules.yaml` | No. Pair it with a required external status check (Ultimate) |
+| GitLab Duo Code Review | Yes, with the GitLab Duo Enterprise add-on | Review instructions per project; exclusions per project, group or instance | No. Approvals and change requests are beta and do not count toward required approvals |
+| CodeRabbit | Yes, through an OAuth2 application; GitLab 16.x and above | Repository instructions and path filters | Not stated as a required check; comments and suggestions on the merge request |
+| Qodo | Yes, on-premises and air-gapped per its deployment matrix | Repository configuration | Not stated |
+| PR-Agent | Yes, self-hosted as a pipeline job or webhook | Repo context files and command configuration | No. You wire the pipeline result into a check yourself |
+| Kodus | Yes, OAuth application or access token, self-hosted | Kody Rules, including centralized config in a repository | Request changes unavailable when GitLab is the only connected provider |
+
+## How the list narrows once you know your constraints
+
+If the instance is air-gapped, the native path depends on a runner you register and a model endpoint you can reach, and Code Review Flow is the only native option that does not need a Duo Enterprise seat. Of the third-party tools, Qodo documents an air-gapped deployment, PR-Agent you host yourself, and Kodus runs on your infrastructure with your own model keys, while CodeRabbit's own self-hosted deployment is scoped to Enterprise. For a genuinely disconnected instance I would start with the tools that run inside the network and let the model keys stay yours, because that removes an entire class of setup problem before you evaluate a single review comment.
+
+If your deciding factor is that review standards live in the repository and are reviewed like code, the native instructions are per-project files, Kody Rules keep rules in the repository with centralized config, and PR-Agent reads repo context files. That is the difference between a reviewer you configure once in a settings page and one your platform team can version, and the second is easier to keep honest across dozens of repositories.
+
+If the deciding factor is enforcement, the answer is the same whichever reviewer you choose. GitLab makes you build the gate separately as a required status check on Ultimate, so pick the reviewer for the quality of its findings and treat blocking as its own piece of configuration. That also keeps the two decisions independent, which is useful when you want to swap reviewers without renegotiating your merge policies.
